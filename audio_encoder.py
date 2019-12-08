@@ -17,7 +17,7 @@ import tensorflow as tf
 from audiocodec.tf import codec
 
 # todo: 1. port codec to tf
-# todo: 1.1. resolve OOM (complex64 tensor somewhere?...) --> chunk the tensor (within tf...)
+# todo: 1.1. chunking is audible due to delay in transform. Better to compute some overlap and stitch together
 # todo: 1.2. port psychoacoustic to tf
 # todo: 2. use codec in Donahue DCGAN
 # todo: 2.1. experiment with adding in masking threshold noise and removing it (at both Generator & Discriminator stage)
@@ -46,10 +46,6 @@ def read_wav(audio_filepath):
     if channels == 1:
         wave_data = wave_data[:, np.newaxis]  # add channels dimension 1
     wave_data = np.array(wave_data).T
-
-    # maximum length (to avoid OOM in GPU)
-    max_seconds = 5*60
-    wave_data = wave_data[:, :44100*max_seconds]
 
     return sample_rate, wave_data
 
@@ -96,27 +92,25 @@ def main():
     # _ = animation.ArtistAnimation(fig, ims, interval=500)
     # plt.show()
 
-    wave_data_tf = tf.convert_to_tensor(wave_data, dtype=tf.float32, name='wave_data')
-
     # encode
     print('Encoding...')
     filter_bands_n = 1024  # note: the less filters we take, the more blocks we have in the signal
     encoder_init = codec.encoder_setup(sample_rate, 0.6, filter_bands_n, bark_bands_n=64)
-    mdct_amplitudes = codec.encoder(wave_data_tf, encoder_init, quality=100)
+    mdct_amplitudes = codec.encoder(wave_data, encoder_init, quality=100)
 
     # decode
     print('Decoding...')
     wave_data_reconstructed = codec.decoder(mdct_amplitudes, encoder_init)
 
-    with tf.Session() as sess:
-        writer = tf.summary.FileWriter("output", sess.graph)
-        result = sess.run(wave_data_reconstructed)
-        writer.close()
+    # with tf.Session() as sess:
+    #     writer = tf.summary.FileWriter("output", sess.graph)
+    #     result = sess.run(wave_data_reconstructed)
+    #     writer.close()
 
     # write back to WAV file
     filepath, ext = os.path.splitext(audio_filepath + audio_filename)
     decoded_filepath = filepath + '_reconstructed.wav'
-    wave_data = np.clip(result.T, -2 ** 15, 2 ** 15 - 1)  # limit values in the array
+    wave_data = np.clip(wave_data_reconstructed.T, -2 ** 15, 2 ** 15 - 1)  # limit values in the array
     wav.write(decoded_filepath, sample_rate, np.int16(wave_data))
 
     play_sound(decoded_filepath)

@@ -12,6 +12,8 @@ import tensorflow as tf
 from audiocodec.tf import mdct
 from audiocodec import psychoacoustic
 
+MAX_CHUNK_SIZE = 8 * 2 ** 20  # 8 MiB; needs to be multiple of filter_band_n
+
 
 def encoder_setup(sample_rate, alpha, filter_bands_n=1024, bark_bands_n=64):
     H = mdct.polyphase_matrix(filter_bands_n)
@@ -26,6 +28,57 @@ def encoder_setup(sample_rate, alpha, filter_bands_n=1024, bark_bands_n=64):
 
 
 def encoder(wave_data, encoder_init, quality=1.0):
+    """Audio encoder.
+    Takes the raw wave data of the audio signal as input.
+    Returns the discretized mdct amplitudes and the logarithms of the masking thresholds in the Bark scale. These allow
+    to (re)construct the scale-factors applied to discretize the mdct amplitudes for each block
+
+    :param wave_data:       signal wave data: each row is a channel (#channels x #samples)
+    :param encoder_init:    initialization data for the encoder
+    :param quality:         compression quality higher is better quality (default: 1.0)
+    :return:                discretized mdct amplitudes (#channels x filter_bands_n x #blocks) and
+                            logarithms of masking thresholds in the bark scale (#channels x #blocks x bark_bands_n)
+    """
+    # chunk up the wave, since tf graph involves some complex64 inside the dct which can blow up the gpu memory
+    channels_n, samples_n = wave_data.shape
+
+    max_samples_in_chunk = int(MAX_CHUNK_SIZE / (4 * channels_n))  # 4 since tf.float32
+    chunks_n = int(np.ceil(samples_n / max_samples_in_chunk))
+
+    split_sizes = [min(n * max_samples_in_chunk, samples_n) for n in range(1, chunks_n)]
+
+    wave_chunks = np.split(wave_data, split_sizes, axis=1)
+
+    # make a dataset from a numpy array
+    def wave_chunk_generator():
+        return iter(wave_chunks)
+
+    dataset = tf.data.Dataset.from_generator(wave_chunk_generator, tf.float32, tf.TensorShape([None, None]))
+
+    # create the iterator
+    wave_iter = dataset.make_one_shot_iterator()
+    wave_chunk = wave_iter.get_next()
+
+    # encode
+    wave_float = tf.dtypes.cast(wave_chunk, dtype=tf.float32)
+    mdct_chunk = _encode_chunk(wave_float, encoder_init, quality)
+
+    mdct_chunks = []
+    with tf.Session() as sess:
+        while True:
+            try:
+                # writer = tf.summary.FileWriter("output", sess.graph)
+                value = sess.run(mdct_chunk)
+                # writer.close()
+                mdct_chunks.append(value)
+            except tf.errors.OutOfRangeError:
+                break
+    mdct_amplitudes = np.concatenate(mdct_chunks, axis=2)
+
+    return mdct_amplitudes
+
+
+def _encode_chunk(wave_data, encoder_init, quality):
     """Audio encoder.
     Takes the raw wave data of the audio signal as input.
     Returns the discretized mdct amplitudes and the logarithms of the masking thresholds in the Bark scale. These allow
@@ -55,12 +108,58 @@ def encoder(wave_data, encoder_init, quality=1.0):
         # mdct_amplitudes_quantized = np.round(scale_factors * mdct_amplitudes)
         #
         # return mdct_amplitudes_quantized, log_mask_thresholds_bark
-
     return mdct_amplitudes
 
 
 # def decoder(mdct_amplitudes_quantized, log_mask_thresholds_bark, encoder_init):
 def decoder(mdct_amplitudes, encoder_init):
+    """Audio decoder
+
+    :param mdct_amplitudes_quantized: discretized mdct amplitudes (#channels x filter_bands_n x #blocks)
+    :param log_mask_thresholds_bark:  logarithms of masking thresholds in Bark scale (#channels x#blocks xbark_bands_n)
+    :param encoder_init:              initialization data for the encoder
+    :return:                          signal wave data: each row is a channel (#channels x #samples)
+    """
+    # chunk up the wave, since tf graph involves some complex64 inside the dct which can blox up the gpu memory
+    channels_n, filter_bands_n, blocks_n = mdct_amplitudes.shape
+
+    max_blocks_in_chunk = int(MAX_CHUNK_SIZE / (4 * channels_n * filter_bands_n))  # 4 since tf.float32
+    chunks_n = int(np.ceil(blocks_n / max_blocks_in_chunk))
+
+    split_sizes = [min(n * max_blocks_in_chunk, blocks_n) for n in range(1, chunks_n)]
+
+    mdct_chunks = np.split(mdct_amplitudes, split_sizes, axis=2)
+
+    # make a dataset from a numpy array
+    def mdct_chunk_generator():
+        return iter(mdct_chunks)
+
+    dataset = tf.data.Dataset.from_generator(mdct_chunk_generator, tf.float32, tf.TensorShape([None, None, None]))
+
+    # create the iterator
+    mdct_iter = dataset.make_one_shot_iterator()
+    mdct_chunk = mdct_iter.get_next()
+
+    # encode
+    wave_chunk = _decode_chunk(mdct_chunk, encoder_init)
+
+    wave_chunks = []
+    with tf.Session() as sess:
+        while True:
+            try:
+                # writer = tf.summary.FileWriter("output", sess.graph)
+                value = sess.run(wave_chunk)
+                # writer.close()
+                wave_chunks.append(value)
+            except tf.errors.OutOfRangeError:
+                break
+    wave_data = np.concatenate(wave_chunks, axis=1)
+
+    return wave_data
+
+
+# def decoder(mdct_amplitudes_quantized, log_mask_thresholds_bark, encoder_init):
+def _decode_chunk(mdct_amplitudes, encoder_init):
     """Audio decoder
 
     :param mdct_amplitudes_quantized: discretized mdct amplitudes (#channels x filter_bands_n x #blocks)

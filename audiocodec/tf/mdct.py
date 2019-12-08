@@ -199,9 +199,12 @@ def _x2polyphase(x, N):
     :return:  multi-channel signal split in blocks (#channel x N x #blocks)
     """
     # truncate x: limit #samples so it can be split into blocks of size N
-    x_trunc = x[:, :int(x.get_shape().as_list()[1] / N) * N]
+    blocks_n = tf.dtypes.cast(tf.math.floor(tf.shape(x)[1] / N), dtype=tf.int32)
+    x_trunc = x[:, :blocks_n * N]
 
-    return tf.transpose(tf.reshape(x_trunc, [tf.shape(x)[0], -1, N]), perm=[0, 2, 1])
+    x_polyphase = tf.transpose(tf.reshape(x_trunc, [tf.shape(x_trunc)[0], -1, N]), perm=[0, 2, 1])
+
+    return x_polyphase
 
 
 def _polyphase2x(xp):
@@ -225,7 +228,7 @@ def _dct4(samples):
     N = tf.shape(samples)[1]
 
     # up-sample to use the DCT3 implementation for our DCT4 transformation:
-    upsampled = tf.reshape(tf.stack([tf.zeros(samples.shape), samples], axis=2),
+    upsampled = tf.reshape(tf.stack([tf.zeros(tf.shape(samples)), samples], axis=2),
                            shape=[tf.shape(samples)[0], 2 * N, tf.shape(samples)[2]])
 
     y = tf.transpose(
