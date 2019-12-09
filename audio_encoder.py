@@ -16,8 +16,11 @@ import tensorflow as tf
 # from audiocodec import codec_utils
 from audiocodec.tf import codec
 
+from audiocodec import psychoacoustic as psychoacoutic
+from audiocodec.tf import psychoacoustic as psychoacoutic_tf
+
+
 # todo: 1. port codec to tf
-# todo: 1.1. chunking is audible due to delay in transform. Better to compute some overlap and stitch together
 # todo: 1.2. port psychoacoustic to tf
 # todo: 2. use codec in Donahue DCGAN
 # todo: 2.1. experiment with adding in masking threshold noise and removing it (at both Generator & Discriminator stage)
@@ -62,7 +65,23 @@ def sine_wav(amplitude, frequency):
     return sample_rate, wave_data
 
 
+def check():
+    sample_rate = 44100
+    bark_bands_n = 64
+    alpha = 1.0
+    a = psychoacoutic.spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha)
+    b = psychoacoutic_tf.spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha)
+
+    with tf.Session() as sess:
+        b_res = sess.run(b)
+
+    print(a - b_res)
+
+
 def main():
+    check()
+    exit()
+
     # settings of program
     audio_filepath = './data/'
     audio_filename = 'asot_00.wav'   # 'high_clover.wav'
