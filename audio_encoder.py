@@ -65,7 +65,7 @@ def sine_wav(amplitude, frequency):
 def main():
     # settings of program
     audio_filepath = './data/'
-    audio_filename = 'high_clover.wav'   # 'high_clover.wav'
+    audio_filename = 'asot_00.wav'   # 'high_clover.wav'
 
     if audio_filename:
         print("Audio file = ", audio_filepath + audio_filename)

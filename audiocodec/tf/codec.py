@@ -12,7 +12,7 @@ import tensorflow as tf
 from audiocodec.tf import mdct
 from audiocodec import psychoacoustic
 
-MAX_CHUNK_SIZE = 4 * 8 * 1024  # 8 * 2 ** 20  # 8 MiB; needs to be multiple of filter_band_n
+MAX_CHUNK_SIZE = 8 * 2 ** 20  # 8 MiB; needs to be multiple of filter_band_n
 
 
 def encoder_setup(sample_rate, alpha, filter_bands_n=1024, bark_bands_n=64):
@@ -47,12 +47,9 @@ def encoder(wave_data, encoder_init, quality=1.0):
     max_samples_in_chunk = int(MAX_CHUNK_SIZE / (4 * channels_n))  # 4 since tf.float32
     chunks_n = int(np.ceil(samples_n / max_samples_in_chunk))
 
-    # pad wave at beginning, since we chunk with overlap at start and end
-    wave_padded = np.concatenate([wave_data, np.zeros((channels_n, filter_bands_n))], axis=1)
-
-    # chunk wave with overlap of filter_bands_n at start and end (since mdct introduces delay of filter_bands_n)
+    # chunk wave with overlap of filter_bands_n at end (since mdct introduces delay of filter_bands_n)
     wave_chunks = [
-        wave_padded[:, n * max_samples_in_chunk + filter_bands_n:(n + 1) * max_samples_in_chunk + 2 * filter_bands_n]
+        wave_data[:, n * max_samples_in_chunk:(n + 1) * max_samples_in_chunk + filter_bands_n]
         for n in range(0, chunks_n)]
 
     # make a dataset from a numpy array
@@ -136,9 +133,11 @@ def decoder(mdct_amplitudes, encoder_init):
     # mdct_padded = np.concatenate([mdct_amplitudes, np.zeros((channels_n, filter_bands_n, 1))], axis=2)
     mdct_padded = mdct_amplitudes
 
+    # print("max_blocks_in_chunk = ", max_blocks_in_chunk)
+
     # chunk wave with overlap of filter_bands_n at start and end (since mdct introduces delay of filter_bands_n)
     mdct_chunks = [
-        mdct_padded[:, :, n * max_blocks_in_chunk + 1:(n + 1) * max_blocks_in_chunk + 2]
+        mdct_padded[:, :, n * max_blocks_in_chunk:(n + 1) * max_blocks_in_chunk + 1]
         for n in range(0, chunks_n)]
 
     # make a dataset from a numpy array
@@ -159,7 +158,7 @@ def decoder(mdct_amplitudes, encoder_init):
         while True:
             try:
                 # writer = tf.summary.FileWriter("output", sess.graph)
-                value = sess.run(wave_chunk)[:, filter_bands_n:-filter_bands_n]
+                value = sess.run(wave_chunk)[:, 2 * filter_bands_n:]
                 # writer.close()
                 wave_chunks.append(value)
             except tf.errors.OutOfRangeError:
