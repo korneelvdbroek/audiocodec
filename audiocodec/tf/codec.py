@@ -12,7 +12,7 @@ import tensorflow as tf
 from audiocodec.tf import mdct
 from audiocodec import psychoacoustic
 
-MAX_CHUNK_SIZE = 8 * 2 ** 20  # 8 MiB; needs to be multiple of filter_band_n
+MAX_CHUNK_SIZE = 4 * 8 * 1024  # 8 * 2 ** 20  # 8 MiB; needs to be multiple of filter_band_n
 
 
 def encoder_setup(sample_rate, alpha, filter_bands_n=1024, bark_bands_n=64):
@@ -24,7 +24,7 @@ def encoder_setup(sample_rate, alpha, filter_bands_n=1024, bark_bands_n=64):
     # quiet_threshold = psychoacoustic.quiet_threshold_in_bark(sample_rate, bark_bands_n)
     # spreading_matrix = psychoacoustic.spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha)
 
-    return sample_rate, H, H_inv  # , W, W_inv, quiet_threshold, spreading_matrix, alpha
+    return sample_rate, filter_bands_n, H, H_inv  # , W, W_inv, quiet_threshold, spreading_matrix, alpha
 
 
 def encoder(wave_data, encoder_init, quality=1.0):
@@ -39,15 +39,21 @@ def encoder(wave_data, encoder_init, quality=1.0):
     :return:                discretized mdct amplitudes (#channels x filter_bands_n x #blocks) and
                             logarithms of masking thresholds in the bark scale (#channels x #blocks x bark_bands_n)
     """
+    _, filter_bands_n, _, _ = encoder_init
+
     # chunk up the wave, since tf graph involves some complex64 inside the dct which can blow up the gpu memory
     channels_n, samples_n = wave_data.shape
 
     max_samples_in_chunk = int(MAX_CHUNK_SIZE / (4 * channels_n))  # 4 since tf.float32
     chunks_n = int(np.ceil(samples_n / max_samples_in_chunk))
 
-    split_sizes = [min(n * max_samples_in_chunk, samples_n) for n in range(1, chunks_n)]
+    # pad wave at beginning, since we chunk with overlap at start and end
+    wave_padded = np.concatenate([wave_data, np.zeros((channels_n, filter_bands_n))], axis=1)
 
-    wave_chunks = np.split(wave_data, split_sizes, axis=1)
+    # chunk wave with overlap of filter_bands_n at start and end (since mdct introduces delay of filter_bands_n)
+    wave_chunks = [
+        wave_padded[:, n * max_samples_in_chunk + filter_bands_n:(n + 1) * max_samples_in_chunk + 2 * filter_bands_n]
+        for n in range(0, chunks_n)]
 
     # make a dataset from a numpy array
     def wave_chunk_generator():
@@ -68,7 +74,7 @@ def encoder(wave_data, encoder_init, quality=1.0):
         while True:
             try:
                 # writer = tf.summary.FileWriter("output", sess.graph)
-                value = sess.run(mdct_chunk)
+                value = sess.run(mdct_chunk)[:, :, 1:-1]
                 # writer.close()
                 mdct_chunks.append(value)
             except tf.errors.OutOfRangeError:
@@ -91,7 +97,7 @@ def _encode_chunk(wave_data, encoder_init, quality):
                             logarithms of masking thresholds in the bark scale (#channels x #blocks x bark_bands_n)
     """
     with tf.name_scope('encoder'):
-        sample_rate, H, H_inv, = encoder_init
+        sample_rate, filter_bands_n, H, H_inv = encoder_init
 
         # 1. MDCT analysis filter bank
         mdct_amplitudes = mdct.transform(wave_data, H)
@@ -126,9 +132,14 @@ def decoder(mdct_amplitudes, encoder_init):
     max_blocks_in_chunk = int(MAX_CHUNK_SIZE / (4 * channels_n * filter_bands_n))  # 4 since tf.float32
     chunks_n = int(np.ceil(blocks_n / max_blocks_in_chunk))
 
-    split_sizes = [min(n * max_blocks_in_chunk, blocks_n) for n in range(1, chunks_n)]
+    # pad mdct at beginning, since we chunk with overlap at start and end
+    # mdct_padded = np.concatenate([mdct_amplitudes, np.zeros((channels_n, filter_bands_n, 1))], axis=2)
+    mdct_padded = mdct_amplitudes
 
-    mdct_chunks = np.split(mdct_amplitudes, split_sizes, axis=2)
+    # chunk wave with overlap of filter_bands_n at start and end (since mdct introduces delay of filter_bands_n)
+    mdct_chunks = [
+        mdct_padded[:, :, n * max_blocks_in_chunk + 1:(n + 1) * max_blocks_in_chunk + 2]
+        for n in range(0, chunks_n)]
 
     # make a dataset from a numpy array
     def mdct_chunk_generator():
@@ -148,7 +159,7 @@ def decoder(mdct_amplitudes, encoder_init):
         while True:
             try:
                 # writer = tf.summary.FileWriter("output", sess.graph)
-                value = sess.run(wave_chunk)
+                value = sess.run(wave_chunk)[:, filter_bands_n:-filter_bands_n]
                 # writer.close()
                 wave_chunks.append(value)
             except tf.errors.OutOfRangeError:
@@ -168,7 +179,7 @@ def _decode_chunk(mdct_amplitudes, encoder_init):
     :return:                          signal wave data: each row is a channel (#channels x #samples)
     """
     with tf.name_scope('decoder'):
-        sample_rate, H, H_inv = encoder_init
+        sample_rate, filter_bands_n, H, H_inv = encoder_init
 
         # # 1. Compute and apply scale factor on discretized mdct amplitudes
         # scale_factors = psychoacoustic.scale_factors(log_mask_thresholds_bark, W_inv)
