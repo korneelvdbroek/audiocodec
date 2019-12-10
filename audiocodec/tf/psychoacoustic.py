@@ -8,7 +8,6 @@ Based on code from Gerald Schuller, June 2018 (https://github.com/TUIlmenauAMS/P
 import tensorflow as tf
 
 
-# checked!
 def bark_freq_mapping(sample_rate, bark_bands_n, filter_bands_n):
     """Compute (static) mapping between MDCT filter bank ranges and Bark bands they fall in
 
@@ -87,7 +86,6 @@ def _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, samp
     :param alpha:             exponent for non-linear superposition as applied on amplitudes
     :return:                  amplitude vector for softest audible sounds given a certain sound (bark_bands_n)
     """
-    filter_bands_n = mdct_amplitudes.shape[1]
     bark_bands_n = spreading_matrix.shape[0]
     max_frequency = sample_rate / 2.0  # Nyquist frequency: maximum frequency given a sample rate
     max_bark = freq2bark(max_frequency)
@@ -96,13 +94,13 @@ def _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, samp
 
     # compute tonality from the spectral flatness measure (SFM = 0dB for noise, SFM << 0dB for tone)
     tonality = tf.minimum(1.0, 10 * tf.log(tf.divide(
-      tf.exp(1 / filter_bands_n * tf.reduce_sum(tf.log(mdct_amplitudes ** 2.0), axis=1)),
-      1 / filter_bands_n * tf.reduce_sum(mdct_amplitudes ** 2.0, axis=1))) / (-60.0 * tf.log(10)))
+      tf.exp(tf.reduce_mean(tf.log(mdct_amplitudes ** 2.0), axis=1)),
+      tf.reduce_mean(mdct_amplitudes ** 2.0, axis=1))) / (-60.0 * tf.log(10.0)))
     tonality = tf.tile(tf.expand_dims(tonality, axis=2), multiples=[1, 1, bark_bands_n])
 
     # compute masking offset O(i) = \alpha (14.5 + z) + (1 - \alpha) 5.5
     # note: einsum('.i.,.i.->.i.') does an element-wise multiplication (and no sum) along a specified axes
-    offset = tf.einsum('cbj,j->cbj', tonality, tf.linspace(0, max_bark, bark_bands_n)) + 9. * tonality + 5.5
+    offset = tf.einsum('cbj,j->cbj', tonality, tf.linspace(0.0, max_bark, bark_bands_n)) + 9. * tonality + 5.5
 
     # add offset to spreading matrix
     masking_matrix = tf.einsum('ij,cbj->cbij', spreading_matrix, 10.0 ** (-alpha * offset / 10.0))
@@ -115,7 +113,6 @@ def _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, samp
     return tf.einsum('cbi,cbij->cbj', amplitudes_in_bark ** (2 * alpha), masking_matrix) ** (1 / (2 * alpha))
 
 
-# todo continue here...
 def spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha):
     """Returns (power) spreading matrix, to apply in bark scale to determine masking threshold from sound
 
@@ -136,15 +133,11 @@ def spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha):
 
     # Turns the spreading prototype function into a (bark_bands_n x bark_bands_n) matrix of shifted versions.
     # Transposed version of (9.17) in Digital Audio Signal Processing by Udo Zolzer
-    spreading_matrix = tf.zeros([bark_bands_n, bark_bands_n])
-    for row in range(bark_bands_n):
-        # copy in row k
-        spreading_matrix[row, :] = f_spreading_intensity[(bark_bands_n - row):(2 * bark_bands_n - row)]
+    spreading_matrix = tf.stack([f_spreading_intensity[(bark_bands_n - row):(2 * bark_bands_n - row)] for row in range(bark_bands_n)], axis=0)
 
     return spreading_matrix
 
 
-# checked
 def quiet_threshold_in_bark(sample_rate, bark_bands_n):
     """Compute the amplitudes of the softest sounds one can hear
 
@@ -169,7 +162,9 @@ def quiet_threshold_in_bark(sample_rate, bark_bands_n):
       -20, 160)
 
     # convert dB to amplitude
-    return tf.pow(10.0, quiet_threshold_dB / 20)
+    quiet_threshold = tf.expand_dims(tf.expand_dims(tf.pow(10.0, quiet_threshold_dB / 20), axis=0), axis = 0)
+
+    return quiet_threshold
 
 
 def scale_factors(mask_thresholds_log_bark, W_inv):
@@ -179,12 +174,12 @@ def scale_factors(mask_thresholds_log_bark, W_inv):
     :param W_inv:                    matrix to convert from filter bins to bark bins (bark_bands_n x filter_bands_n)
     :return:                         scale factors to be applied on amplitudes (#channels x filter_bands_n x #blocks)
     """
-    mask_thresholds_trunc_bark = tf.pow(2, mask_thresholds_log_bark / 4)
+    mask_thresholds_trunc_bark = tf.pow(2., mask_thresholds_log_bark / 4.)
 
     mask_thresholds_trunc = _mappingfrombark(mask_thresholds_trunc_bark, W_inv)
 
     # maximum of the magnitude of the quantization error is delta/2
-    return 1 / (2 * tf.transpose(mask_thresholds_trunc, perm=[0, 2, 1]))
+    return 1. / (2. * tf.transpose(mask_thresholds_trunc, perm=[0, 2, 1]))
 
 
 def _mapping2bark(mdct_amplitudes, W):

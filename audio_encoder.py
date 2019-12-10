@@ -13,11 +13,13 @@ import matplotlib.animation as animation
 
 import tensorflow as tf
 
-# from audiocodec import codec_utils
-from audiocodec.tf import codec
 
-from audiocodec import psychoacoustic as psychoacoutic
-from audiocodec.tf import psychoacoustic as psychoacoutic_tf
+from audiocodec.tf import codec
+from audiocodec.tf import psychoacoustic
+
+# from audiocodec import codec
+# from audiocodec import codec_utils
+# from audiocodec import psychoacoustic as psychoacoustic
 
 
 # todo: 1. port codec to tf
@@ -66,11 +68,22 @@ def sine_wav(amplitude, frequency):
 
 
 def check():
+    """temporary code to check routines np = tf"""
     sample_rate = 44100
     bark_bands_n = 64
+    filter_bands_n = 1024
     alpha = 1.0
-    a = psychoacoutic.spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha)
-    b = psychoacoutic_tf.spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha)
+
+    mdct_amplitudes = np.ones((2, filter_bands_n, 10))
+    mdct_amplitudes_tf = tf.ones([2, filter_bands_n, 10], dtype=tf.float32)
+
+    W_tf, W_inv_tf = psychoacoustic_tf.bark_freq_mapping(sample_rate, bark_bands_n, filter_bands_n)
+    spreading_matrix_tf = psychoacoustic_tf.spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha)
+    b = psychoacoustic_tf._masking_threshold_in_bark(mdct_amplitudes_tf, W_tf, spreading_matrix_tf, alpha, sample_rate)
+
+    W, W_inv = psychoacoustic.bark_freq_mapping(sample_rate, bark_bands_n, filter_bands_n)
+    spreading_matrix = psychoacoustic.spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha)
+    a = psychoacoustic._masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, sample_rate)
 
     with tf.Session() as sess:
         b_res = sess.run(b)
@@ -79,12 +92,9 @@ def check():
 
 
 def main():
-    check()
-    exit()
-
     # settings of program
     audio_filepath = './data/'
-    audio_filename = 'asot_00.wav'   # 'high_clover.wav'
+    audio_filename = 'high_clover.wav'   # 'high_clover.wav'
 
     if audio_filename:
         print("Audio file = ", audio_filepath + audio_filename)
@@ -115,11 +125,11 @@ def main():
     print('Encoding...')
     filter_bands_n = 1024  # note: the less filters we take, the more blocks we have in the signal
     encoder_init = codec.encoder_setup(sample_rate, 0.6, filter_bands_n, bark_bands_n=64)
-    mdct_amplitudes = codec.encoder(wave_data, encoder_init, quality=100)
+    mdct_amplitudes_quantized, log_mask_thresholds_bark = codec.encoder(wave_data, encoder_init, quality=100)
 
     # decode
     print('Decoding...')
-    wave_data_reconstructed = codec.decoder(mdct_amplitudes, encoder_init)
+    wave_data_reconstructed = codec.decoder(mdct_amplitudes_quantized, log_mask_thresholds_bark, encoder_init)
 
     # with tf.Session() as sess:
     #     writer = tf.summary.FileWriter("output", sess.graph)
