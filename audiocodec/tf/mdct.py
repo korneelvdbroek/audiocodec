@@ -2,7 +2,7 @@
 
 """ Implements a MDCT transformation and inverse transformation on (channel x signal data)
 
-Based on code from Gerald Schuller, June 2018 (https://github.com/TUIlmenauAMS/Python-Audio-Coder)
+Loosely based based on code from Gerald Schuller, June 2018 (https://github.com/TUIlmenauAMS/Python-Audio-Coder)
 """
 
 import tensorflow as tf
@@ -10,7 +10,7 @@ import math
 
 
 def setup(N=1024):
-    """Computes required initialization matrices
+    """Computes required initialization matrices (stateless, no OOP)
 
     :param N:    number of filter bands of the filter bank
     :return:     tuple with pre-computed required for encoder and decoder

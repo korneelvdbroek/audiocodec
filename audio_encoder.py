@@ -93,9 +93,7 @@ def main():
 
     # encode
     print('Encoding...')
-    filter_bands_n = 1024  # note: the less filters we take, the more blocks we have in the signal
-    alpha = 0.6  # 0.6
-    encoder_init = codec.encoder_setup(sample_rate, alpha, filter_bands_n, bark_bands_n=64)
+    encoder_init = codec.encoder_setup(sample_rate, filter_bands_n=1024, bark_bands_n=64, alpha=0.6)
     mdct_amplitudes_quantized, log_mask_thresholds_bark = codec.encoder(wave_data, encoder_init, quality=100)
 
     # decode
