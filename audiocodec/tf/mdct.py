@@ -9,6 +9,18 @@ import tensorflow as tf
 import math
 
 
+def setup(N=1024):
+    """Computes required initialization matrices
+
+    :param N:    number of filter bands of the filter bank
+    :return:     tuple with pre-computed required for encoder and decoder
+    """
+    H = polyphase_matrix(N)
+    H_inv = inverse_polyphase_matrix(N)
+
+    return N, H, H_inv
+
+
 def polyphase_matrix(N):
     """Decomposed part of poly-phase matrix of an MDCT filter bank, with a sine modulated window:
       H(z) = F_{analysis} x D x DCT4
@@ -88,7 +100,7 @@ def transform(x, H):
     :return:  N coefficients of MDCT transform for each block (#channels, N, #blocks+1)
     """
     with tf.name_scope('mdct_transform'):
-        N = H.get_shape().as_list()[0]
+        N = tf.dtypes.cast(tf.shape(H)[0], dtype=tf.int32)
 
         # split signal into blocks
         x_pp = _x2polyphase(x, N)               # #channels x N x #blocks
@@ -200,6 +212,7 @@ def _x2polyphase(x, N):
     """
     # truncate x: limit #samples so it can be split into blocks of size N
     blocks_n = tf.dtypes.cast(tf.math.floor(tf.shape(x)[1] / N), dtype=tf.int32)
+
     x_trunc = x[:, :blocks_n * N]
 
     x_polyphase = tf.transpose(tf.reshape(x_trunc, [tf.shape(x_trunc)[0], -1, N]), perm=[0, 2, 1])

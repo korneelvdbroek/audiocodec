@@ -15,16 +15,20 @@ from audiocodec.tf import psychoacoustic
 MAX_CHUNK_SIZE = 8 * 2 ** 20  # 8 MiB; needs to be multiple of filter_band_n
 
 
-def encoder_setup(sample_rate, alpha, filter_bands_n=1024, bark_bands_n=64):
-    H = mdct.polyphase_matrix(filter_bands_n)
-    H_inv = mdct.inverse_polyphase_matrix(filter_bands_n)
+def encoder_setup(sample_rate, filter_bands_n=1024, bark_bands_n=64, alpha=0.6):
+    """Computes required initialization matrices
 
-    W, W_inv = psychoacoustic.bark_freq_mapping(sample_rate, bark_bands_n, filter_bands_n)
+    :param sample_rate:       sample_rate
+    :param alpha:             exponent for non-linear superposition (~0.6)
+    :param filter_bands_n:    number of filter bands of the filter bank
+    :param bark_bands_n:      number of bark bands
+    :return:                  tuple with pre-computed required for encoder and decoder
+    """
+    mdct_setup = mdct.setup(filter_bands_n)
 
-    quiet_threshold = psychoacoustic.quiet_threshold_in_bark(sample_rate, bark_bands_n)
-    spreading_matrix = psychoacoustic.spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha)
+    pa_setup = psychoacoustic.setup(sample_rate, filter_bands_n, bark_bands_n, alpha)
 
-    return sample_rate, filter_bands_n, H, H_inv, W, W_inv, quiet_threshold, spreading_matrix, alpha
+    return mdct_setup, pa_setup
 
 
 def encoder(wave_data, encoder_init, quality=1.0):
@@ -39,7 +43,7 @@ def encoder(wave_data, encoder_init, quality=1.0):
     :return:                discretized mdct amplitudes (#channels x filter_bands_n x #blocks) and
                             logarithms of masking thresholds in the bark scale (#channels x #blocks x bark_bands_n)
     """
-    _, filter_bands_n, _, _, _, _, _, _, _ = encoder_init
+    filter_bands_n, _, _, _, _, _, _, _, _ = encoder_init
 
     # chunk up the wave, since tf graph involves some complex64 inside the dct which can blow up the gpu memory
     channels_n, samples_n = wave_data.shape
@@ -72,46 +76,14 @@ def encoder(wave_data, encoder_init, quality=1.0):
         while True:
             try:
                 # writer = tf.summary.FileWriter("output", sess.graph)
-                value = sess.run((mdct_chunk, mask_chunk))[:, :, 1:-1]
+                value = sess.run([mdct_chunk, mask_chunk])
                 # writer.close()
-                mdct_chunks.append(value[0])
-                mask_chunks.append(value[1])
+                mdct_chunks.append(value[0][:, :, 1:-1])
+                mask_chunks.append(value[1][:, 1:-1, :])
             except tf.errors.OutOfRangeError:
                 break
     mdct_amplitudes_quantized = np.concatenate(mdct_chunks, axis=2)
-    log_mask_thresholds_bark = np.concatenate(mdct_chunks, axis=2)
-
-    return mdct_amplitudes_quantized, log_mask_thresholds_bark
-
-
-def _encode_chunk(wave_data, encoder_init, quality):
-    """Audio encoder.
-    Takes the raw wave data of the audio signal as input.
-    Returns the discretized mdct amplitudes and the logarithms of the masking thresholds in the Bark scale. These allow
-    to (re)construct the scale-factors applied to discretize the mdct amplitudes for each block
-
-    :param wave_data:       signal wave data: each row is a channel (#channels x #samples)
-    :param encoder_init:    initialization data for the encoder
-    :param quality:         compression quality higher is better quality (default: 1.0)
-    :return:                discretized mdct amplitudes (#channels x filter_bands_n x #blocks) and
-                            logarithms of masking thresholds in the bark scale (#channels x #blocks x bark_bands_n)
-    """
-    with tf.name_scope('encoder'):
-        sample_rate, filter_bands_n, H, H_inv, W, W_inv, quiet_threshold, spreading_matrix, alpha = encoder_init
-
-        # 1. MDCT analysis filter bank
-        mdct_amplitudes = mdct.transform(wave_data, H)
-
-        # 2. Masking threshold calculation
-        mask_thresholds_bark = psychoacoustic.global_masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix,
-                                 quiet_threshold, alpha, sample_rate) / quality
-
-        # 3. Use masking threshold to discretize each mdct amplitude
-        # logarithmic discretization of masking threshold (#channels x #blocks x bark_bands_n)
-        log_mask_thresholds_bark = tf.maximum(tf.round(4. * tf.log(mask_thresholds_bark)/tf.log(2.)), 0.)
-
-        scale_factors = psychoacoustic.scale_factors(log_mask_thresholds_bark, W_inv)
-        mdct_amplitudes_quantized = tf.round(scale_factors * mdct_amplitudes)
+    log_mask_thresholds_bark = np.concatenate(mask_chunks, axis=2)
 
     return mdct_amplitudes_quantized, log_mask_thresholds_bark
 
@@ -141,13 +113,14 @@ def decoder(mdct_amplitudes_quantized, log_mask_thresholds_bark, encoder_init):
     # make a dataset from a numpy array
     def chunk_generator():
         for mdct_chunk_gen, mask_chunk_gen in zip(mdct_chunks, mask_chunks):
-            yield mdct_chunk_gen, mask_chunk_gen
+            yield (mdct_chunk_gen, mask_chunk_gen)
 
-    dataset = tf.data.Dataset.from_generator(chunk_generator, tf.float32, tf.TensorShape([None, None, None]))
+    dataset = tf.data.Dataset.from_generator(chunk_generator, (tf.float32, tf.float32),
+                                             (tf.TensorShape([None, None, None]), tf.TensorShape([None, None, None])))
 
     # create dataset iterator
-    mdct_iter = dataset.make_one_shot_iterator()
-    mdct_chunk, mask_chunk = mdct_iter.get_next()
+    iterator = dataset.make_one_shot_iterator()
+    mdct_chunk, mask_chunk = iterator.get_next()
 
     # decode
     wave_chunk = _decode_chunk(mdct_chunk, mask_chunk, encoder_init)
@@ -167,6 +140,40 @@ def decoder(mdct_amplitudes_quantized, log_mask_thresholds_bark, encoder_init):
     return wave_data
 
 
+def _encode_chunk(wave_data, encoder_init, quality):
+    """Audio encoder.
+
+    Takes the raw wave data of the audio signal as input.
+    Returns the discretized mdct amplitudes and the logarithms of the masking thresholds in the Bark scale. These allow
+    to (re)construct the scale-factors applied to discretize the mdct amplitudes for each block
+
+    :param wave_data:       signal wave data: each row is a channel (#channels x #samples)
+    :param encoder_init:    initialization data for the encoder
+    :param quality:         compression quality higher is better quality (default: 1.0)
+    :return:                discretized mdct amplitudes (#channels x filter_bands_n x #blocks) and
+                            logarithms of masking thresholds in the bark scale (#channels x #blocks x bark_bands_n)
+    """
+    with tf.name_scope('encoder'):
+        _, H, _, sample_rate, W, W_inv, quiet_threshold, spreading_matrix, alpha = encoder_init
+
+        # 1. MDCT analysis filter bank
+        mdct_amplitudes = mdct.transform(wave_data, H)
+
+        # 2. Masking threshold calculation
+        mask_thresholds_bark = psychoacoustic.global_masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix,
+                                 quiet_threshold, alpha, sample_rate) / quality
+
+        # 3. Use masking threshold to discretize each mdct amplitude
+        # logarithmic discretization of masking threshold (#channels x #blocks x bark_bands_n)
+        log_mask_thresholds_bark = tf.maximum(tf.round(4. * tf.log(mask_thresholds_bark)/tf.log(2.)), 0.)
+
+        scale_factors = psychoacoustic.scale_factors(log_mask_thresholds_bark, W_inv)
+
+        mdct_amplitudes_quantized = tf.round(scale_factors * mdct_amplitudes)
+
+    return mdct_amplitudes_quantized, log_mask_thresholds_bark
+
+
 def _decode_chunk(mdct_amplitudes_quantized, log_mask_thresholds_bark, encoder_init):
     """Audio decoder
 
@@ -176,7 +183,7 @@ def _decode_chunk(mdct_amplitudes_quantized, log_mask_thresholds_bark, encoder_i
     :return:                          signal wave data: each row is a channel (#channels x #samples)
     """
     with tf.name_scope('decoder'):
-        sample_rate, filter_bands_n, H, H_inv, W, W_inv, quiet_threshold, spreading_matrix, alpha = encoder_init
+        _, _, _, H_inv, _, W_inv, _, _, _ = encoder_init
 
         # 1. Compute and apply scale factor on discretized mdct amplitudes
         scale_factors = psychoacoustic.scale_factors(log_mask_thresholds_bark, W_inv)

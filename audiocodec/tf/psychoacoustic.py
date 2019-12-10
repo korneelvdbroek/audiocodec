@@ -8,7 +8,24 @@ Based on code from Gerald Schuller, June 2018 (https://github.com/TUIlmenauAMS/P
 import tensorflow as tf
 
 
-def bark_freq_mapping(sample_rate, bark_bands_n, filter_bands_n):
+def setup(sample_rate, filter_bands_n=1024, bark_bands_n=64, alpha=0.6):
+    """Computes required initialization matrices
+
+    :param sample_rate:       sample_rate
+    :param alpha:             exponent for non-linear superposition (~0.6)
+    :param filter_bands_n:    number of filter bands of the filter bank
+    :param bark_bands_n:      number of bark bands
+    :return:                  tuple with pre-computed required for encoder and decoder
+    """
+    W, W_inv = _bark_freq_mapping(sample_rate, bark_bands_n, filter_bands_n)
+
+    quiet_threshold = quiet_threshold_in_bark(sample_rate, bark_bands_n)
+    spreading_matrix = spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha)
+
+    return sample_rate, W, W_inv, quiet_threshold, spreading_matrix, alpha
+
+
+def _bark_freq_mapping(sample_rate, bark_bands_n, filter_bands_n):
     """Compute (static) mapping between MDCT filter bank ranges and Bark bands they fall in
 
                               ----> bark_bands_n
@@ -204,7 +221,7 @@ def _mappingfrombark(amplitudes_bark, W_inv):
     :param W_inv:            matrix to convert from filter bins to bark bins (bark_bands_n x filter_bands_n)
     :return:                 vector of mdct amplitudes (spectrum) for each filter (#channels x #blocks x filter_bands_n)
     """
-    return tf.tensordot(amplitudes_bark, W_inv, axes=[[1], [0]])
+    return tf.tensordot(amplitudes_bark, W_inv, axes=[[2], [0]])
 
 
 def freq2bark(frequencies):
