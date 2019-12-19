@@ -21,6 +21,7 @@ def setup(N=1024):
     return N, H, H_inv
 
 
+@tf.function
 def polyphase_matrix(N):
     """Decomposed part of poly-phase matrix of an MDCT filter bank, with a sine modulated window:
       H(z) = F_{analysis} x D x DCT4
@@ -40,6 +41,7 @@ def polyphase_matrix(N):
     return polyphase_matrix
 
 
+@tf.function
 def inverse_polyphase_matrix(N):
     """Decomposed part of inverse poly-phase matrix of an MDCT filter bank, with a sine modulated window:
       G(z) = DCT4 x D^-1 x F_{synthesis}
@@ -59,6 +61,7 @@ def inverse_polyphase_matrix(N):
     return inv_polyphase_matrix
 
 
+@tf.function
 def transform(x, H):
     """MDCT (Modulated Discrete Cosine Transform) analysis filter bank. Filters in MDCT use window-modulated filters.
 
@@ -111,6 +114,7 @@ def transform(x, H):
     return mdct_amplitudes
 
 
+@tf.function
 def inverse_transform(y, Hinv):
     """MDCT synthesis filter bank.
 
@@ -139,9 +143,9 @@ def _filter_window_matrix(N):
     filter_bank_windows = tf.sin(math.pi / (2 * N) * (tf.range(0.5, int(1.5 * N) + 0.5)))
 
     # lace window coefficients around diamond matrix
-    F_upper_left = tf.reverse(tf.diag(filter_bank_windows[0:int(N / 2)]), axis=[1])
-    F_lower_left = tf.diag(filter_bank_windows[int(N / 2):N])
-    F_upper_right = tf.diag(filter_bank_windows[N:(N + int(N / 2))])
+    F_upper_left = tf.reverse(tf.linalg.diag(filter_bank_windows[0:int(N / 2)]), axis=[1])
+    F_lower_left = tf.linalg.diag(filter_bank_windows[int(N / 2):N])
+    F_upper_right = tf.linalg.diag(filter_bank_windows[N:(N + int(N / 2))])
     # F matrix is completed via consistency rule (hence no need for filter_bank_windows range to extend to 2N-1
     sym = 1.0  # The kind of symmetry: +-1
     ff = tf.reverse((sym * tf.ones((int(N / 2)))
@@ -150,7 +154,7 @@ def _filter_window_matrix(N):
     # note:
     # ff entry i (i=0..N/2) = (1 - sin(pi/(2N)(N+i+.5)) * sin(pi/(2N)(N-i-.5))) / sin(pi/(2N)(i+.5))
     #    = sin(pi/(2N) [2N - i+.5])
-    F_lower_right = -tf.reverse(tf.diag(ff), axis=[1])
+    F_lower_right = -tf.reverse(tf.linalg.diag(ff), axis=[1])
 
     return tf.concat([tf.concat([F_upper_left, F_upper_right], axis=1),
                       tf.concat([F_lower_left, F_lower_right], axis=1)], axis=0)
@@ -163,8 +167,8 @@ def _delay_matrix(N):
     :param N:  number of MDCT filters (should be even!)
     :return:   delay matrix (N x N x 2)
     """
-    a = tf.diag(tf.concat([tf.zeros(int(N / 2)), tf.ones(int(N / 2))], axis=0))
-    b = tf.diag(tf.concat([tf.ones(int(N / 2)), tf.zeros(int(N / 2))], axis=0))
+    a = tf.linalg.diag(tf.concat([tf.zeros(int(N / 2)), tf.ones(int(N / 2))], axis=0))
+    b = tf.linalg.diag(tf.concat([tf.ones(int(N / 2)), tf.zeros(int(N / 2))], axis=0))
     return tf.stack([a, b], axis=-1)
 
 
@@ -175,8 +179,8 @@ def _inverse_delay_matrix(N):
     :param N:  number of MDCT filters (should be even!)
     :return:   inverse delay matrix (N x N x 2)
     """
-    a = tf.diag(tf.concat([tf.ones(int(N / 2)), tf.zeros(int(N / 2))], axis=0))
-    b = tf.diag(tf.concat([tf.zeros(int(N / 2)), tf.ones(int(N / 2))], axis=0))
+    a = tf.linalg.diag(tf.concat([tf.ones(int(N / 2)), tf.zeros(int(N / 2))], axis=0))
+    b = tf.linalg.diag(tf.concat([tf.zeros(int(N / 2)), tf.ones(int(N / 2))], axis=0))
     return tf.stack([a, b], axis=-1)
 
 

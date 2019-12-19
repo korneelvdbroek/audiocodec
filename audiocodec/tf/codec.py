@@ -81,7 +81,7 @@ def encoder(wave_data, encoder_init, quality=1.0):
             except tf.errors.OutOfRangeError:
                 break
     mdct_amplitudes_quantized = np.concatenate(mdct_chunks, axis=2)
-    log_mask_thresholds_bark = np.concatenate(mask_chunks, axis=2)
+    log_mask_thresholds_bark = np.concatenate(mask_chunks, axis=1)
 
     return mdct_amplitudes_quantized, log_mask_thresholds_bark
 

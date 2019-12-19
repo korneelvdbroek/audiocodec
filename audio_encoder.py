@@ -65,7 +65,7 @@ def sine_wav(amplitude, frequency):
 def main():
     # settings of program
     audio_filepath = './data/'
-    audio_filename = 'high_clover.wav'   # 'high_clover.wav'
+    audio_filename = 'asot_00.wav'   # 'high_clover.wav'
 
     if audio_filename:
         print("Audio file = ", audio_filepath + audio_filename)
@@ -79,10 +79,12 @@ def main():
         wav.write(audio_filepath + audio_filename, sample_rate, np.int16(np.clip(wave_data.T, -2 ** 15, 2 ** 15 - 1)))
 
     # play_sound(audio_filepath + audio_filename)
+    # limit wav length
+    wave_data = wave_data[:, :2**23]  # ~3min
 
     # modify signal
     print('Modifying signal...')
-    wave_data = codec_utils.modify_signal(wave_data, sample_rate, alpha=0.6)
+    wave_data = codec_utils.modify_signal(wave_data, sample_rate, alpha=0.8)
 
     # (encode and) plot spectrum
     print('Plotting spectrum...')

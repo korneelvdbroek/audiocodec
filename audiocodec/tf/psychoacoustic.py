@@ -25,6 +25,7 @@ def setup(sample_rate, filter_bands_n=1024, bark_bands_n=64, alpha=0.6):
     return sample_rate, W, W_inv, quiet_threshold, spreading_matrix, alpha
 
 
+@tf.function
 def global_masking_threshold_in_bark(mdct_amplitudes, model_init):
     """Determines which amplitudes we cannot hear, either since they are too soft
     to hear or because other louder amplitudes are masking it.
@@ -34,15 +35,19 @@ def global_masking_threshold_in_bark(mdct_amplitudes, model_init):
     :param model_init:        initialization data for the psychoacoustic model
     :return:                  masking threshold (#channels x #blocks x bark_bands_n)
     """
-    sample_rate, W, _, quiet_threshold, spreading_matrix, alpha = model_init
-    masking_threshold = _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, sample_rate)
+    with tf.name_scope('global_masking_threshold'):
+        sample_rate, W, _, quiet_threshold, spreading_matrix, alpha = model_init
+        masking_threshold = _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, sample_rate)
 
-    # Take max between quiet threshold and masking threshold
-    # Note: even though both thresholds are expressed as amplitudes,
-    # they are all positive due to the way they were constructed
-    return tf.maximum(masking_threshold, quiet_threshold)
+        # Take max between quiet threshold and masking threshold
+        # Note: even though both thresholds are expressed as amplitudes,
+        # they are all positive due to the way they were constructed
+        global_masking_threshold = tf.maximum(masking_threshold, quiet_threshold)
+
+    return global_masking_threshold
 
 
+@tf.function
 def scale_factors(mask_thresholds_log_bark, W_inv):
     """Compute scale-factors from logarithmic masking threshold.
 
@@ -50,14 +55,18 @@ def scale_factors(mask_thresholds_log_bark, W_inv):
     :param W_inv:                    matrix to convert from filter bins to bark bins (bark_bands_n x filter_bands_n)
     :return:                         scale factors to be applied on amplitudes (#channels x filter_bands_n x #blocks)
     """
-    mask_thresholds_trunc_bark = tf.pow(2., mask_thresholds_log_bark / 4.)
+    with tf.name_scope('scale_factors'):
+        mask_thresholds_trunc_bark = tf.pow(2., mask_thresholds_log_bark / 4.)
 
-    mask_thresholds_trunc = _mappingfrombark(mask_thresholds_trunc_bark, W_inv)
+        mask_thresholds_trunc = _mappingfrombark(mask_thresholds_trunc_bark, W_inv)
 
-    # maximum of the magnitude of the quantization error is delta/2
-    return 1. / (2. * tf.transpose(mask_thresholds_trunc, perm=[0, 2, 1]))
+        # maximum of the magnitude of the quantization error is delta/2
+        mdct_scale_factors = 1. / (2. * tf.transpose(mask_thresholds_trunc, perm=[0, 2, 1]))
+
+    return mdct_scale_factors
 
 
+@tf.function
 def psychoacoustic_filter(mdct_amplitudes, model_init):
     """Filters out frequencies which are inaudible
 
@@ -65,24 +74,25 @@ def psychoacoustic_filter(mdct_amplitudes, model_init):
     :param model_init:        initialization data for the psychoacoustic model
     :return:                  modified amplitudes (#channels, filter_bands_n, #blocks+1)
     """
-    sample_rate, W, W_inv, quiet_threshold, spreading_matrix, alpha = model_init
+    with tf.name_scope('psychoacoustic_filter'):
+        sample_rate, W, W_inv, quiet_threshold, spreading_matrix, alpha = model_init
 
-    total_threshold = tf.transpose(_mappingfrombark(
-        global_masking_threshold_in_bark(
-            mdct_amplitudes, (sample_rate, W, W_inv, quiet_threshold, spreading_matrix, alpha)), W_inv), perm=[0, 2, 1])
+        total_threshold = tf.transpose(_mappingfrombark(
+            global_masking_threshold_in_bark(
+                mdct_amplitudes, (sample_rate, W, W_inv, quiet_threshold, spreading_matrix, alpha)), W_inv), perm=[0, 2, 1])
 
-    # Update spectrum
-    # 1. remove anything below masking threshold
-    mdct_modified = tf.where(total_threshold ** 2.0 < mdct_amplitudes ** 2.0, mdct_amplitudes,
-                             tf.fill(tf.shape(mdct_amplitudes), 1e-6))
-    # 2. pass-through
-    # mdct_modified = mdct_amplitudes
-    # 3. put in masking threshold
-    # mdct_modified = np.where(total_threshold ** 2.0 < mdct_amplitudes ** 2.0, mdct_amplitudes, total_threshold)
-    # 4. keep only masking threshold
-    # mdct_modified = total_threshold
-    # 5. keep only sound below masking threshold
-    # mdct_modified = np.where(total_threshold ** 2.0 < mdct_amplitudes ** 2.0, 1e-6, mdct_amplitudes)
+        # Update spectrum
+        # 1. remove anything below masking threshold
+        mdct_modified = tf.where(total_threshold ** 2.0 < mdct_amplitudes ** 2.0, mdct_amplitudes,
+                                 tf.fill(tf.shape(mdct_amplitudes), 1e-6))
+        # 2. pass-through
+        # mdct_modified = mdct_amplitudes
+        # 3. put in masking threshold
+        # mdct_modified = np.where(total_threshold ** 2.0 < mdct_amplitudes ** 2.0, mdct_amplitudes, total_threshold)
+        # 4. keep only masking threshold
+        # mdct_modified = total_threshold
+        # 5. keep only sound below masking threshold
+        # mdct_modified = np.where(total_threshold ** 2.0 < mdct_amplitudes ** 2.0, 1e-6, mdct_amplitudes)
 
     return mdct_modified
 
@@ -103,9 +113,9 @@ def _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, samp
     amplitudes_in_bark = _mapping2bark(mdct_amplitudes, W)
 
     # compute tonality from the spectral flatness measure (SFM = 0dB for noise, SFM << 0dB for tone)
-    tonality = tf.minimum(1.0, 10 * tf.log(tf.divide(
-      tf.exp(tf.reduce_mean(tf.log(mdct_amplitudes ** 2.0), axis=1)),
-      tf.reduce_mean(mdct_amplitudes ** 2.0, axis=1))) / (-60.0 * tf.log(10.0)))
+    tonality = tf.minimum(1.0, 10 * tf.math.log(tf.divide(
+      tf.exp(tf.reduce_mean(tf.math.log(mdct_amplitudes ** 2.0), axis=1)),
+      tf.reduce_mean(mdct_amplitudes ** 2.0, axis=1))) / (-60.0 * tf.math.log(10.0)))
     tonality = tf.tile(tf.expand_dims(tonality, axis=2), multiples=[1, 1, bark_bands_n])
 
     # compute masking offset O(i) = \alpha (14.5 + z) + (1 - \alpha) 5.5
@@ -219,7 +229,7 @@ def _bark_freq_mapping(sample_rate, bark_bands_n, filter_bands_n):
 
     # (bark_band_n x bark_band_n) . (bark_band_n x filter_bank_n)
     W_transpose = tf.transpose(W, perm=[1, 0])
-    W_inv = tf.tensordot(tf.diag(tf.pow(1.0 / (1e-6 + tf.reduce_sum(W_transpose, axis=1)), 0.5)), W_transpose,
+    W_inv = tf.tensordot(tf.linalg.diag(tf.pow(1.0 / (1e-6 + tf.reduce_sum(W_transpose, axis=1)), 0.5)), W_transpose,
                          axes=[[1], [0]])
 
     return W, W_inv
