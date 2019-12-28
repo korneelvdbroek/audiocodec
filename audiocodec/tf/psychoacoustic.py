@@ -26,6 +26,23 @@ def setup(sample_rate, filter_bands_n=1024, bark_bands_n=64, alpha=0.6):
 
 
 @tf.function
+def global_masking_threshold(mdct_amplitudes, model_init):
+    """Determines which amplitudes we cannot hear, either since they are too soft
+    to hear or because other louder amplitudes are masking it.
+    Method uses non-linear superposition determined by factor alpha
+
+    :param mdct_amplitudes:   vector of mdct amplitudes (spectrum) for each filter (#channels, filter_bands_n, #blocks+1)
+    :param model_init:        initialization data for the psychoacoustic model
+    :return:                  masking threshold (#channels x filter_bands_n x #blocks)
+    """
+    _, _, W_inv, _, _, _ = model_init
+
+    global_mask_threshold = tf.transpose(_mappingfrombark(
+        global_masking_threshold_in_bark(mdct_amplitudes, model_init), W_inv), perm=[0, 2, 1])
+    return global_mask_threshold
+
+
+@tf.function
 def global_masking_threshold_in_bark(mdct_amplitudes, model_init):
     """Determines which amplitudes we cannot hear, either since they are too soft
     to hear or because other louder amplitudes are masking it.
@@ -42,9 +59,9 @@ def global_masking_threshold_in_bark(mdct_amplitudes, model_init):
         # Take max between quiet threshold and masking threshold
         # Note: even though both thresholds are expressed as amplitudes,
         # they are all positive due to the way they were constructed
-        global_masking_threshold = tf.maximum(masking_threshold, quiet_threshold)
+        global_mask_threshold_in_bark = tf.maximum(masking_threshold, quiet_threshold)
 
-    return global_masking_threshold
+    return global_mask_threshold_in_bark
 
 
 @tf.function
@@ -75,11 +92,10 @@ def psychoacoustic_filter(mdct_amplitudes, model_init):
     :return:                  modified amplitudes (#channels, filter_bands_n, #blocks+1)
     """
     with tf.name_scope('psychoacoustic_filter'):
-        sample_rate, W, W_inv, quiet_threshold, spreading_matrix, alpha = model_init
+        _, _, W_inv, _, _, _ = model_init
 
         total_threshold = tf.transpose(_mappingfrombark(
-            global_masking_threshold_in_bark(
-                mdct_amplitudes, (sample_rate, W, W_inv, quiet_threshold, spreading_matrix, alpha)), W_inv), perm=[0, 2, 1])
+            global_masking_threshold_in_bark(mdct_amplitudes, model_init), W_inv), perm=[0, 2, 1])
 
         # Update spectrum
         # 1. remove anything below masking threshold
@@ -114,8 +130,8 @@ def _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, samp
 
     # compute tonality from the spectral flatness measure (SFM = 0dB for noise, SFM << 0dB for tone)
     tonality = tf.minimum(1.0, 10 * tf.math.log(tf.divide(
-      tf.exp(tf.reduce_mean(tf.math.log(mdct_amplitudes ** 2.0), axis=1)),
-      tf.reduce_mean(mdct_amplitudes ** 2.0, axis=1))) / (-60.0 * tf.math.log(10.0)))
+      tf.exp(tf.reduce_mean(tf.math.log(tf.pow(mdct_amplitudes, 2)), axis=1)),
+      tf.reduce_mean(tf.pow(mdct_amplitudes, 2), axis=1))) / (-60.0 * tf.math.log(10.0)))
     tonality = tf.tile(tf.expand_dims(tonality, axis=2), multiples=[1, 1, bark_bands_n])
 
     # compute masking offset O(i) = \alpha (14.5 + z) + (1 - \alpha) 5.5
@@ -123,14 +139,14 @@ def _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, samp
     offset = tf.einsum('cbj,j->cbj', tonality, tf.linspace(0.0, max_bark, bark_bands_n)) + 9. * tonality + 5.5
 
     # add offset to spreading matrix
-    masking_matrix = tf.einsum('ij,cbj->cbij', spreading_matrix, 10.0 ** (-alpha * offset / 10.0))
+    masking_matrix = tf.einsum('ij,cbj->cbij', spreading_matrix, tf.pow(10.0, -alpha * offset / 10.0))
 
     # Transposed version of (9.17) in Digital Audio Signal Processing by Udo Zolzer
     # \Sum_i (amplitude_i^2)^{\alpha} x [ mask^{\alpha}_{i-n} ]_n
     #   = \Sum amplitude_i x mask_{in}                       --> each row is a mask
     # Non-linear superposition (see p13 ./docs/05_shl_AC_Psychacoustics_Models_WS-2016-17_gs.pdf)
     # \alpha ~ 0.3 is valid for 94 bark_bands_n; with less bark_bands_n 0.3 leads to (way) too much masking
-    return tf.einsum('cbi,cbij->cbj', amplitudes_in_bark ** (2 * alpha), masking_matrix) ** (1 / (2 * alpha))
+    return tf.pow(tf.einsum('cbi,cbij->cbj', tf.pow(amplitudes_in_bark, 2 * alpha), masking_matrix), 1. / (2. * alpha))
 
 
 def _spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha):
@@ -145,7 +161,7 @@ def _spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha):
     max_bark = freq2bark(max_frequency)
 
     # Prototype spreading function [Bark/dB]
-    f_spreading = tf.map_fn(lambda z: 15.81 + 7.5 * (z + 0.474) - 17.5 * tf.sqrt(1 + (z + 0.474) ** 2),
+    f_spreading = tf.map_fn(lambda z: 15.81 + 7.5 * (z + 0.474) - 17.5 * tf.sqrt(1 + tf.pow(z + 0.474, 2)),
                             tf.linspace(-max_bark, max_bark, 2 * bark_bands_n))
 
     # Convert from dB to intensity and include alpha exponent
@@ -245,7 +261,7 @@ def _mapping2bark(mdct_amplitudes, W):
     :param W:                matrix to convert from filter bins to bark bins (filter_bands_n x bark_bands_n)
     :return:                 vector of signal amplitudes of the Bark bands (#channels x #blocks x bark_bands_n)
     """
-    return tf.pow(tf.tensordot(mdct_amplitudes ** 2.0, W, axes=[[1], [0]]), 0.5)
+    return tf.pow(tf.tensordot(tf.pow(mdct_amplitudes, 2), W, axes=[[1], [0]]), 0.5)
 
 
 def _mappingfrombark(amplitudes_bark, W_inv):
@@ -253,7 +269,7 @@ def _mappingfrombark(amplitudes_bark, W_inv):
     Power spectral density of Bark band is split equally between the
     filter bands making up the Bark band (many-to-one).
 
-    :param amplitudes_bark:  vector of signal amplitudes of the Bark bands (#channels x bark_bands_n x #blocks)
+    :param amplitudes_bark:  vector of signal amplitudes of the Bark bands (#channels x #blocks x bark_bands_n)
     :param W_inv:            matrix to convert from filter bins to bark bins (bark_bands_n x filter_bands_n)
     :return:                 vector of mdct amplitudes (spectrum) for each filter (#channels x #blocks x filter_bands_n)
     """

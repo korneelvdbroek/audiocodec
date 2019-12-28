@@ -17,17 +17,6 @@ from audiocodec.tf import codec
 from audiocodec import codec_utils
 
 
-# todo: 1. port codec to tf
-# todo: 1.2. port psychoacoustic to tf
-# todo: 2. use codec in Donahue DCGAN
-# todo: 2.1. experiment with adding in masking threshold noise and removing it (at both Generator & Discriminator stage)
-# todo: 2.2. resolve how to work with psychoacoustic redundancy in audio representation (can we lower dim, or do we
-# todo:      filter out redundancy before we pass it to the discriminator?
-# todo:      2 options: work with redundant representation & filter psychoacoustic at start of Discriminator
-# todo:      OR first train a NN to reduce the dimensionality of mdct amplitudes, then freeze and use in full network
-# todo: 3. move to NVidia StyleGAN
-
-
 def play_sound(audio_filepath):
     print("Playing {0}...".format(audio_filepath), end=' ', flush=True)
     winsound.PlaySound(audio_filepath, winsound.SND_FILENAME)

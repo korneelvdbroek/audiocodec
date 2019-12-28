@@ -98,9 +98,10 @@ def transform(x, H):
       ./docs/03_shl_FilterBanks2_WS2016-17.pdf
       ./docs/mrate.pdf
 
-    :param x: signal wave data: each row is a channel (#channels x #samples)
-    :param H: poly-phase matrix (N x N x 2)
-    :return:  N coefficients of MDCT transform for each block (#channels, N, #blocks+1)
+    :param x:  signal wave data: each row is a channel (#channels x #samples)
+    :param H:  poly-phase matrix (N x N x 2)
+    :return:   N coefficients of MDCT transform for each block (#channels, N, #blocks+1)
+               where #samples = N x #blocks
     """
     with tf.name_scope('mdct_transform'):
         N = tf.dtypes.cast(tf.shape(H)[0], dtype=tf.int32)
