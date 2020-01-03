@@ -43,18 +43,19 @@ def global_masking_threshold(mdct_amplitudes, model_init):
 
 
 @tf.function
-def global_masking_threshold_in_bark(mdct_amplitudes, model_init):
+def global_masking_threshold_in_bark(mdct_amplitudes, model_init, drown=0.):
     """Determines which amplitudes we cannot hear, either since they are too soft
     to hear or because other louder amplitudes are masking it.
     Method uses non-linear superposition determined by factor alpha
 
     :param mdct_amplitudes:   vector of mdct amplitudes (spectrum) for each filter (#channels, filter_bands_n, #blocks+1)
     :param model_init:        initialization data for the psychoacoustic model
+    :param drown:             factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
     :return:                  masking threshold (#channels x #blocks x bark_bands_n)
     """
     with tf.name_scope('global_masking_threshold'):
         sample_rate, W, _, quiet_threshold, spreading_matrix, alpha = model_init
-        masking_threshold = _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, sample_rate)
+        masking_threshold = _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, sample_rate, drown)
 
         # Take max between quiet threshold and masking threshold
         # Note: even though both thresholds are expressed as amplitudes,
@@ -84,18 +85,19 @@ def scale_factors(mask_thresholds_log_bark, W_inv):
 
 
 @tf.function
-def psychoacoustic_filter(mdct_amplitudes, model_init):
+def psychoacoustic_filter(mdct_amplitudes, model_init, drown=0.):
     """Filters out frequencies which are inaudible
 
     :param mdct_amplitudes:   vector of mdct amplitudes (spectrum) for each filter (#channels, filter_bands_n, #blocks)
     :param model_init:        initialization data for the psychoacoustic model
+    :param drown:             factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
     :return:                  modified amplitudes (#channels, filter_bands_n, #blocks+1)
     """
     with tf.name_scope('psychoacoustic_filter'):
         _, _, W_inv, _, _, _ = model_init
 
         total_threshold = tf.transpose(_mappingfrombark(
-            global_masking_threshold_in_bark(mdct_amplitudes, model_init), W_inv), perm=[0, 2, 1])
+            global_masking_threshold_in_bark(mdct_amplitudes, model_init, drown), W_inv), perm=[0, 2, 1])
 
         # Update spectrum
         # 1. remove anything below masking threshold
@@ -113,30 +115,34 @@ def psychoacoustic_filter(mdct_amplitudes, model_init):
     return mdct_modified
 
 
-def _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, sample_rate):
+def _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, sample_rate, drown=0.):
     """Returns amplitudes that are masked by the sound defined by mdct_amplitudes
 
     :param mdct_amplitudes:   vector of mdct amplitudes (spectrum) for each filter (#channels, filter_bands_n, #blocks+1)
     :param W:                 matrix to convert from filter bins to bark bins (filter_bands_n x bark_bands_n)
     :param spreading_matrix:  spreading matrix (bark_bands_n x bark_bands_n)
     :param alpha:             exponent for non-linear superposition as applied on amplitudes
+    :param drown:             factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
     :return:                  amplitude vector for softest audible sounds given a certain sound (bark_bands_n)
     """
     bark_bands_n = spreading_matrix.shape[0]
     max_frequency = sample_rate / 2.0  # Nyquist frequency: maximum frequency given a sample rate
     max_bark = freq2bark(max_frequency)
 
-    amplitudes_in_bark = _mapping2bark(mdct_amplitudes, W)
-
-    # compute tonality from the spectral flatness measure (SFM = 0dB for noise, SFM << 0dB for tone)
+    # compute tonality (0:white noise ... 1:tonal) from the spectral flatness measure
+    # (SFM = 0dB for white noise, SFM << 0dB for pure tone)
+    # tonality = 10./-60. * \log_10  (e^{1/N \sum_{filter_band_i} \ln(a_i^2)}) /
+    #                                (1/N \sum_{filter_band_i} a_i^2)
     tonality = tf.minimum(1.0, 10 * tf.math.log(tf.divide(
       tf.exp(tf.reduce_mean(tf.math.log(tf.pow(mdct_amplitudes, 2)), axis=1)),
       tf.reduce_mean(tf.pow(mdct_amplitudes, 2), axis=1))) / (-60.0 * tf.math.log(10.0)))
+    # [#channels, #blocks, bark_bands_n]
     tonality = tf.tile(tf.expand_dims(tonality, axis=2), multiples=[1, 1, bark_bands_n])
 
-    # compute masking offset O(i) = \alpha (14.5 + z) + (1 - \alpha) 5.5
+    # compute masking offset: O(i) = tonality (14.5 + i) + (1 - tonality) 5.5
     # note: einsum('.i.,.i.->.i.') does an element-wise multiplication (and no sum) along a specified axes
-    offset = tf.einsum('cbj,j->cbj', tonality, tf.linspace(0.0, max_bark, bark_bands_n)) + 9. * tonality + 5.5
+    offset = (1. - drown) * \
+             (tf.einsum('cbj,j->cbj', tonality, tf.linspace(0.0, max_bark, bark_bands_n)) + 9. * tonality + 5.5)
 
     # add offset to spreading matrix
     masking_matrix = tf.einsum('ij,cbj->cbij', spreading_matrix, tf.pow(10.0, -alpha * offset / 10.0))
@@ -146,6 +152,7 @@ def _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, samp
     #   = \Sum amplitude_i x mask_{in}                       --> each row is a mask
     # Non-linear superposition (see p13 ./docs/05_shl_AC_Psychacoustics_Models_WS-2016-17_gs.pdf)
     # \alpha ~ 0.3 is valid for 94 bark_bands_n; with less bark_bands_n 0.3 leads to (way) too much masking
+    amplitudes_in_bark = _mapping2bark(mdct_amplitudes, W)
     return tf.pow(tf.einsum('cbi,cbij->cbj', tf.pow(amplitudes_in_bark, 2 * alpha), masking_matrix), 1. / (2. * alpha))
 
 
@@ -169,7 +176,8 @@ def _spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha):
 
     # Turns the spreading prototype function into a (bark_bands_n x bark_bands_n) matrix of shifted versions.
     # Transposed version of (9.17) in Digital Audio Signal Processing by Udo Zolzer
-    spreading_matrix = tf.stack([f_spreading_intensity[(bark_bands_n - row):(2 * bark_bands_n - row)] for row in range(bark_bands_n)], axis=0)
+    spreading_matrix = tf.stack([f_spreading_intensity[(bark_bands_n - row):(2 * bark_bands_n - row)]
+                                 for row in range(bark_bands_n)], axis=0)
 
     return spreading_matrix
 
@@ -179,7 +187,7 @@ def _quiet_threshold_in_bark(sample_rate, bark_bands_n):
 
     :param sample_rate:   sample rate
     :param bark_bands_n:  number of bark bands
-    :return:              amplitude vector for softest audible sounds (bark_bands_n)
+    :return:              amplitude vector for softest audible sounds [1, 1, bark_bands_n]
     """
     # Threshold in quiet:
     max_frequency = sample_rate / 2.0  # Nyquist frequency: maximum frequency given a sample rate
@@ -198,7 +206,7 @@ def _quiet_threshold_in_bark(sample_rate, bark_bands_n):
       -20, 160)
 
     # convert dB to amplitude
-    quiet_threshold = tf.expand_dims(tf.expand_dims(tf.pow(10.0, quiet_threshold_dB / 20), axis=0), axis = 0)
+    quiet_threshold = tf.expand_dims(tf.expand_dims(tf.pow(10.0, quiet_threshold_dB / 20), axis=0), axis=0)
 
     return quiet_threshold
 

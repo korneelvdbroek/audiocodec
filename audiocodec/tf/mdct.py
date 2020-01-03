@@ -8,21 +8,26 @@ Loosely based based on code from Gerald Schuller, June 2018 (https://github.com/
 import tensorflow as tf
 import math
 
+_LOG_EPS = 1e-6
+_dB_MIN = -20
+_dB_MAX = 160
 
+
+@tf.function
 def setup(N=1024):
     """Computes required initialization matrices (stateless, no OOP)
 
     :param N:    number of filter bands of the filter bank
     :return:     tuple with pre-computed required for encoder and decoder
     """
-    H = polyphase_matrix(N)
-    H_inv = inverse_polyphase_matrix(N)
+    H = _polyphase_matrix(N)
+    H_inv = _inv_polyphase_matrix(N)
 
     return N, H, H_inv
 
 
 @tf.function
-def polyphase_matrix(N):
+def _polyphase_matrix(N):
     """Decomposed part of poly-phase matrix of an MDCT filter bank, with a sine modulated window:
       H(z) = F_{analysis} x D x DCT4
 
@@ -30,19 +35,19 @@ def polyphase_matrix(N):
     :return:  F_{analysis} x D           (N x N x 2)
     """
     with tf.name_scope('poly_phase_matrix'):
-      with tf.name_scope('F_analysis'):
+        with tf.name_scope('F_analysis'):
           F_analysis = tf.expand_dims(_filter_window_matrix(N), axis=-1)    # N x N x 1
-      with tf.name_scope('delay_matrix'):
+        with tf.name_scope('delay_matrix'):
           D = _delay_matrix(N)                                              # N x N x 2
 
-      with tf.name_scope('polyphase_matrix'):
+        with tf.name_scope('polyphase_matrix'):
           polyphase_matrix = _polmatmult(F_analysis, D)                     # N x N x 2
 
     return polyphase_matrix
 
 
 @tf.function
-def inverse_polyphase_matrix(N):
+def _inv_polyphase_matrix(N):
     """Decomposed part of inverse poly-phase matrix of an MDCT filter bank, with a sine modulated window:
       G(z) = DCT4 x D^-1 x F_{synthesis}
 
@@ -116,16 +121,16 @@ def transform(x, H):
 
 
 @tf.function
-def inverse_transform(y, Hinv):
+def inverse_transform(y, H_inv):
     """MDCT synthesis filter bank.
 
-    :param y:     encoded signal in 3d array (#channels x N x #blocks+1)
-    :param Hinv:  inverse poly-phase matrix (N x N x 2)
-    :return:      restored signal (#channels x #samples)
+    :param y:      encoded signal in 3d array (#channels x N x #blocks+1)
+    :param H_inv:  inverse poly-phase matrix (N x N x 2)
+    :return:       restored signal (#channels x #samples)
     """
     with tf.name_scope('inv_mdct_transform'):
         # put y through inverse filter bank
-        x_pp = _polmatmult(_dct4(y), Hinv)
+        x_pp = _polmatmult(_dct4(y), H_inv)
 
         # glue back the blocks to one signal
         x = _polyphase2x(x_pp)
@@ -279,3 +284,34 @@ def _polmatmult(A, B):
                           padding="SAME")
 
     return tf.transpose(C, perm=[0, 2, 1])
+
+
+@tf.function
+def normalize_mdct(mdct_amplitudes):
+    """Normalize mdct amplitudes from -inf..inf range to -1..1 range
+    Converts absolute value of amplitude to dB and maps dB_MIN..dB_MAX to 0..1
+    Sign of amplitude is used as sign of normalized output.
+
+    :param mdct_amplitudes: -inf..inf  [channels_n, filter_bands_n, #blocks]
+    :return:                -1..1      [channels_n, filter_bands_n, #blocks]
+    """
+    # convert to dB, clip, normalize and add in sign, so -1 <= X_lmag <= 1
+    mdct_db = 20. * tf.math.log(tf.abs(mdct_amplitudes) + _LOG_EPS) / tf.math.log(10.)
+    mdct_clipped = tf.clip_by_value(mdct_db, _dB_MIN, _dB_MAX)
+    mdct_norm = tf.sign(mdct_amplitudes) * (mdct_clipped - _dB_MIN) / (_dB_MAX - _dB_MIN)
+
+    return mdct_norm
+
+
+@tf.function
+def inv_normalize_mdct(mdct_norm):
+    """Convert normalized mdct amplitudes to actual amplitude value
+
+    :param mdct_norm: -1..1      [channels_n, filter_bands_n, #blocks]
+    :return:          -inf..inf  [channels_n, filter_bands_n, #blocks]
+    """
+    # remove dB rescaling
+    mdct_db = (_dB_MAX - _dB_MIN) * tf.abs(mdct_norm) + _dB_MIN
+    mdct_amplitudes = tf.sign(mdct_norm) * tf.exp(tf.math.log(10.) * mdct_db / 20.)
+
+    return mdct_amplitudes
