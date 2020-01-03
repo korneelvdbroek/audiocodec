@@ -19,11 +19,13 @@ import matplotlib.animation as animation
 from audiocodec.tf import codec, mdct, psychoacoustic
 from audiocodec import codec_utils
 
-# todo: 2. move to [batches_n, blocks_n, filters_n, channels_n] format
-# todo: 3. move all psychoacoustic filter to the normalized mdct space (speedup...)
-# todo: 3. pull psychoacoustic filter in from trancegan code
+# todo: 1. fix normalization issues in mdct
+# todo: 2. pyschoacoustic model:
+# todo: 2.1 move to [batches_n, blocks_n, filters_n, channels_n] format in psychoacoustic
+# todo: 2.2 move all psychoacoustic filter to the normalized mdct space (speedup...)
+# todo: 2.3 pull psychoacoustic filter in from trancegan code
 
-CPU_ONLY = True
+CPU_ONLY = False
 
 # Set CPU as available physical device
 if CPU_ONLY:
@@ -58,11 +60,10 @@ def load_wav(audio_filepath, sample_rate=None):
 
     :param audio_filepath: path and filename of wav file
     :param sample_rate:    sample rate at which audio file needs to be read
-    :return:               raw wave data (#channels x #audio_samples) and sample rate
+    :return:               raw wave data in range -1..1 (#channels x #audio_samples) and sample rate
     """
     print("Loading audio file {0}...".format(audio_filepath), end=' ', flush=True)
     wave_data, sample_rate = librosa.core.load(audio_filepath, sr=sample_rate, mono=False)
-    wave_data = wave_data * 2**15
 
     if wave_data.ndim == 1:
         wave_data = np.reshape(wave_data, [1, wave_data.shape[0]])
@@ -71,7 +72,7 @@ def load_wav(audio_filepath, sample_rate=None):
 
 
 def save_wav(audio_filepath, wave_data, sample_rate):
-    wave_data = np.clip(wave_data.T, -2 ** 15, 2 ** 15 - 1)  # limit values in the array
+    wave_data = np.clip(2**15 * wave_data.T, -2 ** 15, 2 ** 15 - 1)  # limit values in the array
     wav.write(audio_filepath, sample_rate, np.int16(wave_data))
     return
 
@@ -83,6 +84,25 @@ def clip_wav(start, stop, wave_data, sample_rate):
     return wave_data[:, (minute_start*60+second_start)*sample_rate:(minute_stop*60+second_stop)*sample_rate]
 
 
+def test_mdct(sample_rate, wave_data):
+    # plot spectrum
+    filter_bands_n = 90
+    mdct_setup = mdct.setup(filter_bands_n)
+
+    wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
+
+    spectrum = mdct.transform(wave_data, mdct_setup)
+    wave_reproduced = mdct.inverse_transform(spectrum, mdct_setup)
+
+    fig, ax = plt.subplots(nrows=1)
+    image1 = codec_utils.plot_spectrogram(ax, spectrum)
+    plt.show()
+
+    play_wav(wave_reproduced.numpy(), sample_rate)
+    save_wav('./data/asot_02_cosmos_sr8100_118_128_reconstructed.wav', wave_reproduced.numpy(), sample_rate)
+
+    exit()
+
 
 def main():
     # load audio file
@@ -90,6 +110,8 @@ def main():
     audio_filename = 'asot_02_cosmos_sr8100_118_128.wav'
     sample_rate = 8100
     wave_data, sample_rate = load_wav(audio_filepath + audio_filename, sample_rate)
+
+    test_mdct(sample_rate, wave_data)
 
     # limit wav length to ~3min
     # wave_data = wave_data[:, :2 ** 23]
@@ -99,10 +121,11 @@ def main():
 
     # plot spectrum
     filter_bands_n = 90
-    N, H, H_inv = mdct.setup(filter_bands_n)
+    mdct_setup = mdct.setup(filter_bands_n)
     psychoacoustic_init = psychoacoustic.setup(sample_rate, filter_bands_n, bark_bands_n=24, alpha=0.6)
 
-    spectrum = mdct.transform(wave_data, H)
+    wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
+    spectrum = mdct.transform(wave_data, mdct_setup)
     spectrum_modified = psychoacoustic.psychoacoustic_filter(spectrum, psychoacoustic_init, drown=0.0)
 
     # plot both spectrograms
@@ -145,9 +168,8 @@ def main():
     codec_utils.plot_spectrogram(ax3, spectrum2_modified)
     plt.show()
 
-
     # reproduce original waveform
-    wave_reproduced = mdct.inverse_transform(spectrum2_modified, H_inv)
+    wave_reproduced = mdct.inverse_transform(spectrum2_modified, mdct_setup)
 
     play_wav(wave_reproduced.numpy(), sample_rate)
     save_wav(audio_filepath + 'asot_02_cosmos_sr8100_118_128_reconstructed.wav', wave_reproduced.numpy(), sample_rate)

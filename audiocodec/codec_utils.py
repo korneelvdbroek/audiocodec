@@ -35,7 +35,7 @@ def modify_signal(wave_data_np, sample_rate, filter_bands_n=1024, bark_bands_n=6
 
 def plot_spectrogram(ax, mdct_amplitudes, channel=0):
     spectrum_norm = mdct.normalize_mdct(mdct_amplitudes)
-    image = ax.imshow(np.flip(spectrum_norm[channel, :, :], axis=0), cmap='gray', vmin=-1., vmax=1., interpolation='none')
+    image = ax.imshow(np.flip(np.transpose(spectrum_norm[channel, :, :]), axis=0), cmap='gray', vmin=-1., vmax=1., interpolation='none')
     return image
 
 
