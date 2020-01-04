@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
 
-from audiocodec.tf import mdct, psychoacoustic
+from audiocodec import psychoacoustic, mdct
 
 
 def modify_signal(wave_data_np, sample_rate, filter_bands_n=1024, bark_bands_n=64, alpha=0.6):

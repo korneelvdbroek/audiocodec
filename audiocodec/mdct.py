@@ -305,6 +305,7 @@ def normalize_mdct(mdct_amplitudes):
     """
     # convert to dB, clip, normalize and add in sign, so -1 <= X_lmag <= 1
     mdct_db = 20. * tf.math.log(tf.abs(mdct_amplitudes) * (2**15) + _LOG_EPS) / tf.math.log(10.)
+
     tf.print(tf.reduce_max(mdct_db))
     tf.print(tf.reduce_min(mdct_db))
     mdct_clipped = tf.clip_by_value(mdct_db, _dB_MIN, _dB_MAX)

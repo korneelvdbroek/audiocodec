@@ -7,8 +7,7 @@ import numpy as np
 
 import tensorflow as tf
 
-from audiocodec.tf import mdct
-from audiocodec.tf import psychoacoustic
+from audiocodec import psychoacoustic, mdct
 
 MAX_CHUNK_SIZE = 8 * 2 ** 20  # 8 MiB; needs to be multiple of filter_band_n
 

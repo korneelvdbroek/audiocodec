@@ -14,12 +14,9 @@ import librosa
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
+from audiocodec import codec_utils, psychoacoustic, mdct, codec
 
-# from audiocodec import codec
-from audiocodec.tf import codec, mdct, psychoacoustic
-from audiocodec import codec_utils
-
-# todo: 1. fix normalization issues in mdct
+# todo: 1. fix normalization issues in mdct (try different filter_n & see impact on mdct amplitudes)
 # todo: 2. pyschoacoustic model:
 # todo: 2.1 move to [batches_n, blocks_n, filters_n, channels_n] format in psychoacoustic
 # todo: 2.2 move all psychoacoustic filter to the normalized mdct space (speedup...)
