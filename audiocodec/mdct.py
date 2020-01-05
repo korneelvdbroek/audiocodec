@@ -21,7 +21,7 @@ def setup(filters_n=1024, window_type='vorbis'):
     todo: work out polymatmul(x_pp, H) and polymatmul(y, H_inv) in more efficient way
 
     :param filters_n:   number of filter bands of the filter bank (needs to be even)
-    :param window_type: None, 'sin' or 'vorbis' (default) to select window type
+    :param window_type: None, 'sine' or 'vorbis' (default) to select window type
     :return:            tuple with pre-computed required for encoder and decoder
     """
     assert (filters_n % 2) == 0, "number of filters used in mdct transformation needs to be even"
@@ -146,13 +146,13 @@ def _filter_window_matrix(filters_n, window_type="vorbis"):
     synthesis base-band impulse responses. Hence has det 1 or -1.
 
     :param filters_n:   number of MDCT filters (needs to be even!)
-    :param modified:    if True (default) then does a MDCT, if False does a DCT
+    :param window_type: None, 'sine' or 'vorbis' (default) to select window type
     :return:            F of shape (filters_n, filters_n)
     """
-    if window_type.lower == 'sin':
+    if window_type.lower() == 'sine':
         # Sine window:
         filter_bank_windows = tf.sin(math.pi / (2 * filters_n) * (tf.range(0.5, int(1.5 * filters_n) + 0.5)))
-    elif window_type == 'vorbis':
+    elif window_type.lower() == 'vorbis':
         filter_bank_windows = tf.sin(
             math.pi / 2. * tf.sin(math.pi / (2. * filters_n) * tf.range(0.5, int(1.5 * filters_n) + 0.5)) ** 2)
     else:
@@ -306,8 +306,9 @@ def normalize_mdct(mdct_amplitudes):
     :param mdct_amplitudes: -inf..inf  [channels_n, #blocks, filter_bands_n]
     :return:                -1..1      [channels_n, #blocks, filter_bands_n]
     """
+    tf.print('normalizing...')
     mdct_norm = tf.sign(mdct_amplitudes) / 6. * \
-                tf.math.log(tf.abs(mdct_amplitudes) * 10.**6 / math.sqrt(2.*mdct_amplitudes.shape[2]) + _LOG_EPS) / \
+                tf.maximum(tf.math.log(tf.abs(mdct_amplitudes) * 10.**6 / math.sqrt(2.*mdct_amplitudes.shape[2])), 0.0) / \
                 tf.math.log(10.)
 
     return tf.clip_by_value(mdct_norm, -1., 1.)

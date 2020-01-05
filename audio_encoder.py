@@ -16,11 +16,10 @@ import matplotlib.animation as animation
 
 from audiocodec import codec_utils, psychoacoustic, mdct, codec
 
-# todo: 1. fix normalization issues in mdct (try different filter_n & see impact on mdct amplitudes)
-# todo: 2. pyschoacoustic model:
-# todo: 2.1 move to [batches_n, blocks_n, filters_n, channels_n] format in psychoacoustic
-# todo: 2.2 move all psychoacoustic filter to the normalized mdct space (speedup...)
-# todo: 2.3 pull psychoacoustic filter in from trancegan code
+# todo: 1. pyschoacoustic model:
+# todo: 1.1 move to [batches_n, blocks_n, filters_n, channels_n] format in psychoacoustic
+# todo: 1.2 move all psychoacoustic filter to the normalized mdct space (speedup...)
+# todo: 1.3 pull psychoacoustic filter in from trancegan code
 
 CPU_ONLY = False
 DEBUG = False
@@ -88,8 +87,8 @@ def clip_wav(start, stop, wave_data, sample_rate):
 
 def test_mdct(sample_rate, wave_data):
     # plot spectrum
-    filter_bands_n = 256
-    mdct_setup = mdct.setup(filter_bands_n)
+    filter_bands_n = 90
+    mdct_setup = mdct.setup(filter_bands_n, window_type='sine')
 
     wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
 
@@ -99,11 +98,6 @@ def test_mdct(sample_rate, wave_data):
     fig, ax = plt.subplots(nrows=1)
     codec_utils.plot_spectrogram(ax, spectrum)
     plt.show()
-
-    # print(wave_data) # , summarize=181)
-    # print(wave_reproduced) #, summarize=181)
-    tf.print(wave_data - wave_reproduced[:, filter_bands_n:-filter_bands_n], summarize=181)
-    tf.print(tf.reduce_max(tf.abs(wave_data - wave_reproduced[:, filter_bands_n:-filter_bands_n])))
 
     play_wav(wave_reproduced.numpy(), sample_rate)
     save_wav('./data/asot_02_cosmos_sr8100_118_128_reconstructed.wav', wave_reproduced.numpy(), sample_rate)
@@ -126,6 +120,10 @@ def main():
 
     test_mdct(sample_rate, wave_data)
 
+    exit()
+
+    # todo: code below is broken, while psychoacoustic module is being refactored...
+    
     # play_wav(wave_data, sample_rate)
 
     # plot spectrum
