@@ -23,14 +23,18 @@ from audiocodec import codec_utils, psychoacoustic, mdct, codec
 # todo: 2.3 pull psychoacoustic filter in from trancegan code
 
 CPU_ONLY = False
+DEBUG = False
 
 # Set CPU as available physical device
 if CPU_ONLY:
     print('Running Tensorflow on CPU only')
     my_devices = tf.config.experimental.list_physical_devices(device_type='CPU')
     tf.config.experimental.set_visible_devices(devices=my_devices)
+
+if DEBUG:
+    tf.compat.v1.RunOptions(report_tensor_allocations_upon_oom=True)
     # To find out which devices your operations and tensors are assigned to
-    # tf.debugging.set_log_device_placement(True)
+    tf.debugging.set_log_device_placement(True)
 
 
 def play_wav(wave_data, sample_rate):
@@ -53,10 +57,11 @@ def sine_wav(amplitude, frequency, sample_rate=44100, duration_sec=2.0):
 
 
 def load_wav(audio_filepath, sample_rate=None):
-    """Read in wav file at given sample_rate. If sample_rate is None, then original sample rate is preserved
+    """Read in wav file at given sample_rate.
 
     :param audio_filepath: path and filename of wav file
-    :param sample_rate:    sample rate at which audio file needs to be read
+    :param sample_rate:    sample rate at which audio file needs to be read.
+                           If sample_rate is None (default), then original sample rate is preserved
     :return:               raw wave data in range -1..1 (#channels x #audio_samples) and sample rate
     """
     print("Loading audio file {0}...".format(audio_filepath), end=' ', flush=True)
@@ -83,7 +88,7 @@ def clip_wav(start, stop, wave_data, sample_rate):
 
 def test_mdct(sample_rate, wave_data):
     # plot spectrum
-    filter_bands_n = 90
+    filter_bands_n = 512
     mdct_setup = mdct.setup(filter_bands_n)
 
     wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
@@ -104,15 +109,16 @@ def test_mdct(sample_rate, wave_data):
 def main():
     # load audio file
     audio_filepath = './data/'
-    audio_filename = 'asot_02_cosmos_sr8100_118_128.wav'
-    sample_rate = 8100
+    audio_filename = 'asot_02_cosmos.wav'   # 'asot_02_cosmos_sr8100_118_128.wav'
+    sample_rate = None   # 90*90
     wave_data, sample_rate = load_wav(audio_filepath + audio_filename, sample_rate)
-
-    test_mdct(sample_rate, wave_data)
+    print(sample_rate)
 
     # limit wav length to ~3min
     # wave_data = wave_data[:, :2 ** 23]
-    # wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
+    wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
+
+    test_mdct(sample_rate, wave_data)
 
     # play_wav(wave_data, sample_rate)
 

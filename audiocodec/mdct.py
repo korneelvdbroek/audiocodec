@@ -16,17 +16,21 @@ _dB_MAX = 120
 @tf.function
 def setup(filters_n=1024):
     """Computes required initialization matrices (stateless, no OOP)
+    Note: H and H_inv are very sparse (2xfilter_n non-zero elements, arranged in diamond shape),
+    yet TF2.0 does not support tf.nn.convolution for SparseTensor
+    todo: work out polymatmul(x_pp, H) and polymatmul(y, H_inv) in more efficient way
 
     :param filters_n:   number of filter bands of the filter bank
     :return:            tuple with pre-computed required for encoder and decoder
     """
+    assert (filters_n % 2) == 0, "number of filters used in mdct transformation needs to be even"
+
     H = _polyphase_matrix(filters_n)
     H_inv = _inv_polyphase_matrix(filters_n)
 
     return filters_n, H, H_inv
 
 
-@tf.function
 def _polyphase_matrix(filters_n):
     """Decomposed part of poly-phase matrix of an MDCT filter bank, with a sine modulated window:
       H(z) = F_{analysis} x D x DCT4 =
@@ -37,12 +41,11 @@ def _polyphase_matrix(filters_n):
     with tf.name_scope('poly_phase_matrix'):
         F_analysis = tf.expand_dims(_filter_window_matrix(filters_n), axis=1)     # [filters_n, 1, filters_n]
         D = _delay_matrix(filters_n)                                              # [2, filters_n, filters_n]
-        polyphase_matrix = _polmatmult(F_analysis, D)                             # [filters_n, 2, filters_n]
+        polyphase_matrix = _polymatmul(F_analysis, D)                             # [filters_n, 2, filters_n]
 
     return tf.transpose(polyphase_matrix, perm=[1, 0, 2])                         # [2, filters_n, filters_n]
 
 
-@tf.function
 def _inv_polyphase_matrix(filters_n):
     """Decomposed part of inverse poly-phase matrix of an MDCT filter bank, with a sine modulated window:
       G(z) = DCT4 x D^-1 x F_{synthesis}
@@ -55,7 +58,7 @@ def _inv_polyphase_matrix(filters_n):
         F_synthesis = tf.expand_dims(
                         tf.linalg.inv(_filter_window_matrix(filters_n)), axis=0)        # [1, filters_n, filters_n]
         D_inv = _inverse_delay_matrix(filters_n)                                        # [filters_n, 2, filters_n]
-        inv_polyphase_matrix = _polmatmult(D_inv, F_synthesis)                          # [filters_n, 2, filters_n]
+        inv_polyphase_matrix = _polymatmul(D_inv, F_synthesis)                          # [filters_n, 2, filters_n]
 
     return tf.transpose(inv_polyphase_matrix, perm=[1, 0, 2])                           # [2, filters_n, filters_n]
 
@@ -110,7 +113,7 @@ def transform(x, model_init):
         x_pp = _x2polyphase(x, filters_n)               # [#channels, #blocks, filters_n]
 
         # put x through filter bank
-        mdct_amplitudes = _dct4(_polmatmult(x_pp, H))   # [#channels, #blocks+1, filters_n]
+        mdct_amplitudes = _dct4(_polymatmul(x_pp, H))   # [#channels, #blocks+1, filters_n]
 
     return mdct_amplitudes
 
@@ -127,7 +130,7 @@ def inverse_transform(y, model_init):
 
     with tf.name_scope('inv_mdct_transform'):
         # put y through inverse filter bank
-        x_pp = _polmatmult(_dct4(y), H_inv)
+        x_pp = _polymatmul(_dct4(y), H_inv)
 
         # glue back the blocks to one signal
         x = _polyphase2x(x_pp)
@@ -135,7 +138,6 @@ def inverse_transform(y, model_init):
     return x
 
 
-@tf.function
 def _filter_window_matrix(filters_n):
     """Produces a diamond shaped folding matrix F from the sine window which leads to identical analysis and
     synthesis base-band impulse responses. Hence has det 1 or -1.
@@ -164,7 +166,6 @@ def _filter_window_matrix(filters_n):
                       tf.concat([F_lower_left, F_lower_right], axis=1)], axis=0)
 
 
-@tf.function
 def _delay_matrix(filters_n):
     """Delay matrix D(z), which has delay z^-1 on the upper half of its diagonal
     in a 3D polynomial representation (exponents of z^-1 are in the third dimension)
@@ -177,7 +178,6 @@ def _delay_matrix(filters_n):
     return tf.stack([a, b], axis=0)
 
 
-@tf.function
 def _inverse_delay_matrix(filters_n):
     """Causal inverse delay matrix D^{-1}(z), which has delays z^-1  on the lower
     half in 3D polynomial representation (exponents of z^-1 are in third dimension)
@@ -190,7 +190,6 @@ def _inverse_delay_matrix(filters_n):
     return tf.stack([a, b], axis=1)
 
 
-@tf.function
 def _x2polyphase(x, filters_n):
     """Split signal in each channel into blocks of size filters_n.
     Last part of signal is ignored, if it does not fit into a block.
@@ -227,7 +226,6 @@ def _x2polyphase(x, filters_n):
     return tf.reshape(x, [tf.shape(x)[0], -1, filters_n])
 
 
-@tf.function
 def _polyphase2x(xp):
     """Glues back together the blocks (on axis=1)
 
@@ -237,7 +235,6 @@ def _polyphase2x(xp):
     return tf.reshape(xp, [tf.shape(xp)[0], -1])
 
 
-@tf.function
 def _dct4(samples):
     """DCT4 transformation on axis=1 of samples
 
@@ -263,7 +260,7 @@ def _dct4(samples):
 
 
 @tf.function
-def _polmatmult(A, F):
+def _polymatmul(A, F):
     """Matrix multiplication of matrices where each entry is a polynomial.
 
     :param A: 3D matrix A, with 2nd dimension the polynomial coefficients
@@ -273,56 +270,46 @@ def _polmatmult(A, F):
                     = \\sum_{m=0}^n    \\sum_j A{i m j}           F_flip{f-n+m jk}   with f=tf.shape(F)[2]-1=degree(F)
                     = \\sum_{mm=f-n}^f \\sum_j A{i mm-f+n j}      F_flip{mm jk}      with mm=m+(f-n)
                     = \\sum {mm=f-n}^f \\sum_j A_padded{i mm+n j} F_flip{mm jk}      A padded with degree(F)
+                    = tf.nn.convolution(A_padded, F_flip)
         where F plays role of filter (kernel) which is dragged over the padded A.
     """
     F_flip = tf.reverse(F, axis=[0])
 
-    # add padding: degree(F) zeros at start and end along the 3rd (polynomial) dimension
-    A_padded = tf.concat([tf.zeros([tf.shape(A)[0], tf.shape(F)[1]-1, tf.shape(A)[2]]),
-                          A,
-                          tf.zeros([tf.shape(A)[0], tf.shape(F)[1]-1, tf.shape(A)[2]])], axis=1)
+    # add padding: degree(F) zeros at start and end along A's polynomial dimension
+    F_degree = tf.shape(F)[0] - 1
+    A_padded = tf.pad(A, paddings=tf.convert_to_tensor([[0, 0], [F_degree, F_degree], [0, 0]]))
 
     return tf.nn.convolution(A_padded, F_flip, padding="VALID")
 
 
 @tf.function
 def normalize_mdct(mdct_amplitudes):
-    """With an audio signal in the -1..1 range, the mdct amplitudes is maximally of the order of \sqrt{2 filter_n}
-    as can be seen from the dct4 formula
-
-    .. math:
-        mdct_{dB} = 20 \\log_{10} |mdct_{amplitude}| / 2^{-15}
-
-    We can then normalize the mdct amplitudes in dB in the -1..1 range, by assuming they are
-    within dB_MIN = -20 and dB_MAX = 160
-
-    Normalize mdct amplitudes from -inf..inf range to -1..1 range
-    Converts absolute value of amplitude to dB and maps dB_MIN..dB_MAX to 0..1
+    """With an audio signal in the -1..1 range, the mdct amplitudes are maximally of the order of \sqrt{2 filter_n}
+    as can be seen from the dct4 formula.
+    Assuming a 100dBSPL maximum sound level limit, we rescale the mdct amplitudes to dB scale with:
+       mdct_dB   = 20 \\log_{10}( 10^5 mdct_{ampl} / \\sqrt{2*filter_n})
+    Now, we linearly rescale within the -20dB..100dB range and map on 0..1:
+       mdct_norm = 1/6 \\log_{10}( 10^6 mdct_{ampl} / \\sqrt{2*filter_n})
     Sign of amplitude is used as sign of normalized output.
 
-    :param mdct_amplitudes: -inf..inf  [channels_n, filter_bands_n, #blocks]
-    :return:                -1..1      [channels_n, filter_bands_n, #blocks]
+    :param mdct_amplitudes: -inf..inf  [channels_n, #blocks, filter_bands_n]
+    :return:                -1..1      [channels_n, #blocks, filter_bands_n]
     """
-    # convert to dB, clip, normalize and add in sign, so -1 <= X_lmag <= 1
-    mdct_db = 20. * tf.math.log(tf.abs(mdct_amplitudes) * (2**15) + _LOG_EPS) / tf.math.log(10.)
+    mdct_norm = tf.sign(mdct_amplitudes) / 6. * \
+                tf.math.log(tf.abs(mdct_amplitudes) * 10.**6 / math.sqrt(2.*mdct_amplitudes.shape[2]) + _LOG_EPS) / \
+                tf.math.log(10.)
 
-    tf.print(tf.reduce_max(mdct_db))
-    tf.print(tf.reduce_min(mdct_db))
-    mdct_clipped = tf.clip_by_value(mdct_db, _dB_MIN, _dB_MAX)
-    mdct_norm = tf.sign(mdct_amplitudes) * (mdct_clipped - _dB_MIN) / (_dB_MAX - _dB_MIN)
-
-    return mdct_norm
+    return tf.clip_by_value(mdct_norm, -1., 1.)
 
 
 @tf.function
 def inv_normalize_mdct(mdct_norm):
-    """Convert normalized mdct amplitudes to actual amplitude value
+    """Convert normalized mdct amplitudes in -1..1 range to actual amplitude values
 
-    :param mdct_norm: -1..1      [channels_n, filter_bands_n, #blocks]
-    :return:          -inf..inf  [channels_n, filter_bands_n, #blocks]
+    :param mdct_norm: -1..1      [channels_n, #blocks, filter_bands_n]
+    :return:          -inf..inf  [channels_n, #blocks, filter_bands_n]
     """
-    # remove dB rescaling
-    mdct_db = (_dB_MAX - _dB_MIN) * tf.abs(mdct_norm) + _dB_MIN
-    mdct_amplitudes = tf.sign(mdct_norm) * tf.exp(tf.math.log(10.) * (mdct_db/2**15) / 20.)
+    mdct_amplitudes = tf.sign(mdct_norm) * \
+                      math.sqrt(2.*mdct_norm.shape[2]) * tf.pow(10., 6.*(tf.abs(mdct_norm) - 1.))
 
     return mdct_amplitudes
