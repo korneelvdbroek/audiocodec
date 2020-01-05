@@ -14,24 +14,25 @@ _dB_MAX = 120
 
 
 @tf.function
-def setup(filters_n=1024):
+def setup(filters_n=1024, window_type='vorbis'):
     """Computes required initialization matrices (stateless, no OOP)
     Note: H and H_inv are very sparse (2xfilter_n non-zero elements, arranged in diamond shape),
     yet TF2.0 does not support tf.nn.convolution for SparseTensor
     todo: work out polymatmul(x_pp, H) and polymatmul(y, H_inv) in more efficient way
 
-    :param filters_n:   number of filter bands of the filter bank
+    :param filters_n:   number of filter bands of the filter bank (needs to be even)
+    :param window_type: None, 'sin' or 'vorbis' (default) to select window type
     :return:            tuple with pre-computed required for encoder and decoder
     """
     assert (filters_n % 2) == 0, "number of filters used in mdct transformation needs to be even"
 
-    H = _polyphase_matrix(filters_n)
-    H_inv = _inv_polyphase_matrix(filters_n)
+    H = _polyphase_matrix(filters_n, window_type)
+    H_inv = _inv_polyphase_matrix(filters_n, window_type)
 
     return filters_n, H, H_inv
 
 
-def _polyphase_matrix(filters_n):
+def _polyphase_matrix(filters_n, window_type='vorbis'):
     """Decomposed part of poly-phase matrix of an MDCT filter bank, with a sine modulated window:
       H(z) = F_{analysis} x D x DCT4 =
 
@@ -39,14 +40,15 @@ def _polyphase_matrix(filters_n):
     :return:           F_{analysis} x D           [filters_n, filters_n, 2]
     """
     with tf.name_scope('poly_phase_matrix'):
-        F_analysis = tf.expand_dims(_filter_window_matrix(filters_n), axis=1)     # [filters_n, 1, filters_n]
+        F_analysis = tf.expand_dims(
+            _filter_window_matrix(filters_n, window_type), axis=1)              # [filters_n, 1, filters_n]
         D = _delay_matrix(filters_n)                                              # [2, filters_n, filters_n]
         polyphase_matrix = _polymatmul(F_analysis, D)                             # [filters_n, 2, filters_n]
 
     return tf.transpose(polyphase_matrix, perm=[1, 0, 2])                         # [2, filters_n, filters_n]
 
 
-def _inv_polyphase_matrix(filters_n):
+def _inv_polyphase_matrix(filters_n, window_type='vorbis'):
     """Decomposed part of inverse poly-phase matrix of an MDCT filter bank, with a sine modulated window:
       G(z) = DCT4 x D^-1 x F_{synthesis}
 
@@ -56,7 +58,8 @@ def _inv_polyphase_matrix(filters_n):
     with tf.name_scope('inv_poly_phase_matrix'):
         # invert Fa matrix for synthesis after removing last dim:
         F_synthesis = tf.expand_dims(
-                        tf.linalg.inv(_filter_window_matrix(filters_n)), axis=0)        # [1, filters_n, filters_n]
+                        tf.linalg.inv(
+                            _filter_window_matrix(filters_n, window_type)), axis=0)   # [1, filters_n, filters_n]
         D_inv = _inverse_delay_matrix(filters_n)                                        # [filters_n, 2, filters_n]
         inv_polyphase_matrix = _polymatmul(D_inv, F_synthesis)                          # [filters_n, 2, filters_n]
 
@@ -79,7 +82,7 @@ def transform(x, model_init):
 
     Down-sampling of the output of the filters_n filters by factor filters_n is
     without loss of information (Nyquist Theorem).
-    Input has #samples, output has same amount of data (#samples = filters_n x #blocks).
+    Input has #samples, output has same amount of data (#samples = #blocks x filters_n).
 
     To improve computational efficiency, order of filter and down-sampling can be switched around (Noble Identities).
     Each filter itself needs to be split into its filters_n poly-phase decompositions (see p25 ./docs/mrate.pdf):
@@ -104,7 +107,7 @@ def transform(x, model_init):
     :param x:            signal data assumed in -1..1 range [channels, #samples]
     :param model_init:   initialization data for the mdct model
     :return:             filters_n coefficients of MDCT transform for each block [#channels, #blocks+1, filters_n]
-                         where #samples = filters_n x #blocks
+                         where #samples = #blocks x filters_n
     """
     filters_n, H, _ = model_init
 
@@ -138,15 +141,23 @@ def inverse_transform(y, model_init):
     return x
 
 
-def _filter_window_matrix(filters_n):
+def _filter_window_matrix(filters_n, window_type="vorbis"):
     """Produces a diamond shaped folding matrix F from the sine window which leads to identical analysis and
     synthesis base-band impulse responses. Hence has det 1 or -1.
 
     :param filters_n:   number of MDCT filters (needs to be even!)
+    :param modified:    if True (default) then does a MDCT, if False does a DCT
     :return:            F of shape (filters_n, filters_n)
     """
-    # Sine window:
-    filter_bank_windows = tf.sin(math.pi / (2 * filters_n) * (tf.range(0.5, int(1.5 * filters_n) + 0.5)))
+    if window_type.lower == 'sin':
+        # Sine window:
+        filter_bank_windows = tf.sin(math.pi / (2 * filters_n) * (tf.range(0.5, int(1.5 * filters_n) + 0.5)))
+    elif window_type == 'vorbis':
+        filter_bank_windows = tf.sin(
+            math.pi / 2. * tf.sin(math.pi / (2. * filters_n) * tf.range(0.5, int(1.5 * filters_n) + 0.5)) ** 2)
+    else:
+        # no modified window (issues with stopband attenuation)
+        filter_bank_windows = tf.ones(shape=[filters_n + int(filters_n / 2)])
 
     # lace window coefficients around diamond matrix
     F_upper_left = tf.reverse(tf.linalg.diag(filter_bank_windows[0:int(filters_n / 2)]), axis=[1])

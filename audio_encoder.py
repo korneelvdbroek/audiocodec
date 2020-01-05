@@ -88,7 +88,7 @@ def clip_wav(start, stop, wave_data, sample_rate):
 
 def test_mdct(sample_rate, wave_data):
     # plot spectrum
-    filter_bands_n = 512
+    filter_bands_n = 256
     mdct_setup = mdct.setup(filter_bands_n)
 
     wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
@@ -97,8 +97,13 @@ def test_mdct(sample_rate, wave_data):
     wave_reproduced = mdct.inverse_transform(spectrum, mdct_setup)
 
     fig, ax = plt.subplots(nrows=1)
-    image1 = codec_utils.plot_spectrogram(ax, spectrum)
+    codec_utils.plot_spectrogram(ax, spectrum)
     plt.show()
+
+    # print(wave_data) # , summarize=181)
+    # print(wave_reproduced) #, summarize=181)
+    tf.print(wave_data - wave_reproduced[:, filter_bands_n:-filter_bands_n], summarize=181)
+    tf.print(tf.reduce_max(tf.abs(wave_data - wave_reproduced[:, filter_bands_n:-filter_bands_n])))
 
     play_wav(wave_reproduced.numpy(), sample_rate)
     save_wav('./data/asot_02_cosmos_sr8100_118_128_reconstructed.wav', wave_reproduced.numpy(), sample_rate)
@@ -109,14 +114,15 @@ def test_mdct(sample_rate, wave_data):
 def main():
     # load audio file
     audio_filepath = './data/'
-    audio_filename = 'asot_02_cosmos.wav'   # 'asot_02_cosmos_sr8100_118_128.wav'
-    sample_rate = None   # 90*90
+    audio_filename = 'sine.wav'   # 'asot_02_cosmos_sr8100_118_128.wav'
+    sample_rate = 90*90  # None   # 90*90
     wave_data, sample_rate = load_wav(audio_filepath + audio_filename, sample_rate)
     print(sample_rate)
+    print(wave_data.shape)
 
     # limit wav length to ~3min
     # wave_data = wave_data[:, :2 ** 23]
-    wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
+    #wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
 
     test_mdct(sample_rate, wave_data)
 
