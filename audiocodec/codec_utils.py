@@ -33,9 +33,16 @@ def modify_signal(wave_data_np, sample_rate, filter_bands_n=1024, bark_bands_n=6
     return wave_modified_out
 
 
-def plot_spectrogram(ax, mdct_amplitudes, channel=0):
+def plot_spectrogram(ax, mdct_amplitudes, sample_rate, filter_bands_n, channel=0):
     spectrum_norm = mdct.normalize_mdct(mdct_amplitudes)
     image = ax.imshow(np.flip(np.transpose(spectrum_norm[channel, :, :]), axis=0), cmap='gray', vmin=-1., vmax=1., interpolation='none')
+
+    # convert labels to Hz on y-axis
+    ytick_locations = [100, 200, 500, 1000, 2000, 5000, 10000, 20000]
+    max_frequency = sample_rate / 2  # Nyquist frequency: maximum frequency given a sample rate
+    filter_band_width = max_frequency / filter_bands_n
+    ax.set_yticks([filter_bands_n - (f/filter_band_width - .5) for f in ytick_locations])
+    ax.set_yticklabels(["{0:3.0f}".format(f) for f in ytick_locations])
     return image
 
 

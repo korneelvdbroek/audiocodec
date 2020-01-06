@@ -16,10 +16,9 @@ import matplotlib.animation as animation
 
 from audiocodec import codec_utils, psychoacoustic, mdct, codec
 
-# todo: 1. pyschoacoustic model:
-# todo: 1.1 move to [batches_n, blocks_n, filters_n, channels_n] format in psychoacoustic
-# todo: 1.2 move all psychoacoustic filter to the normalized mdct space (speedup...)
-# todo: 1.3 pull psychoacoustic filter in from trancegan code
+# todo: 0. mdct: check for precision errors -- why do we get all this noisy stuff in the spectrogram... (not the phase!)
+# todo: 1.1 move all psychoacoustic filter to the normalized mdct space (speedup...)
+# todo: 1.2 add psychoacoustic filters to arsenal (noise-filter, zero filter, LReLU filter) (move trancegan code)
 
 CPU_ONLY = False
 DEBUG = False
@@ -49,10 +48,8 @@ def play_wav(wave_data, sample_rate):
 def sine_wav(amplitude, frequency, sample_rate=44100, duration_sec=2.0):
     """Create wav which contains sine wave
     """
-    wave_data = amplitude * np.sin(2.0 * np.pi * frequency * np.arange(0, sample_rate*duration_sec) / sample_rate)
-    wave_data = wave_data[np.newaxis, :]
-
-    return wave_data, sample_rate
+    wave_data = amplitude * np.sin(2.0 * np.pi * frequency * tf.range(0, sample_rate * duration_sec, dtype=tf.float32) / sample_rate)
+    return tf.expand_dims(wave_data, axis=0), sample_rate
 
 
 def load_wav(audio_filepath, sample_rate=None):
@@ -68,12 +65,13 @@ def load_wav(audio_filepath, sample_rate=None):
 
     if wave_data.ndim == 1:
         wave_data = np.reshape(wave_data, [1, wave_data.shape[0]])
-    print('done')
+    print('done (sample rate = {})'.format(sample_rate))
     return wave_data, sample_rate
 
 
 def save_wav(audio_filepath, wave_data, sample_rate):
-    wave_data = np.clip(2**15 * wave_data.T, -2 ** 15, 2 ** 15 - 1)  # limit values in the array
+    wave_data = wave_data.numpy().T
+    wave_data = np.clip(2**15 * wave_data, -2 ** 15, 2 ** 15 - 1)  # limit values in the array
     wav.write(audio_filepath, sample_rate, np.int16(wave_data))
     return
 
@@ -85,103 +83,12 @@ def clip_wav(start, stop, wave_data, sample_rate):
     return wave_data[:, (minute_start*60+second_start)*sample_rate:(minute_stop*60+second_stop)*sample_rate]
 
 
-def test_mdct(sample_rate, wave_data):
-    # plot spectrum
-    filter_bands_n = 90
-    mdct_setup = mdct.setup(filter_bands_n, window_type='sine')
-
-    wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
-
-    spectrum = mdct.transform(wave_data, mdct_setup)
-    wave_reproduced = mdct.inverse_transform(spectrum, mdct_setup)
-
-    fig, ax = plt.subplots(nrows=1)
-    codec_utils.plot_spectrogram(ax, spectrum)
-    plt.show()
-
-    play_wav(wave_reproduced.numpy(), sample_rate)
-    save_wav('./data/asot_02_cosmos_sr8100_118_128_reconstructed.wav', wave_reproduced.numpy(), sample_rate)
-
-    exit()
-
-
-def main():
+def test_codec():
     # load audio file
     audio_filepath = './data/'
-    audio_filename = 'sine.wav'   # 'asot_02_cosmos_sr8100_118_128.wav'
-    sample_rate = 90*90  # None   # 90*90
-    wave_data, sample_rate = load_wav(audio_filepath + audio_filename, sample_rate)
-    print(sample_rate)
-    print(wave_data.shape)
-
-    # limit wav length to ~3min
-    # wave_data = wave_data[:, :2 ** 23]
-    #wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
-
-    test_mdct(sample_rate, wave_data)
-
-    exit()
-
-    # todo: code below is broken, while psychoacoustic module is being refactored...
-    
-    # play_wav(wave_data, sample_rate)
-
-    # plot spectrum
-    filter_bands_n = 90
-    mdct_setup = mdct.setup(filter_bands_n)
-    psychoacoustic_init = psychoacoustic.setup(sample_rate, filter_bands_n, bark_bands_n=24, alpha=0.6)
-
-    wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
-    spectrum = mdct.transform(wave_data, mdct_setup)
-    spectrum_modified = psychoacoustic.psychoacoustic_filter(spectrum, psychoacoustic_init, drown=0.0)
-
-    # plot both spectrograms
-    fig, (ax1, ax2) = plt.subplots(nrows=2)
-    image1 = codec_utils.plot_spectrogram(ax1, spectrum)
-    image2 = codec_utils.plot_spectrogram(ax2, spectrum_modified)
-    plt.show()
-
-    # slice freq bin time axis
-    if False:
-        freq_bin_slice = 5
-        plt.plot(spectrum_modified[0, freq_bin_slice, :])
-        plt.plot(spectrum_modified[0, freq_bin_slice + 1, :])
-        plt.plot(spectrum_modified[0, freq_bin_slice + 2, :])
-        plt.show()
-
-    # apply another mdct transform...
-    spectrum2 = mdct.transform(spectrum_modified[0, :, :], H).numpy()
-    # spectrum2 = np.sign(spectrum2) * (np.log(np.abs(spectrum2)) + 14.)
-    vmin = np.amin(spectrum2)
-    vmax = np.amax(spectrum2)
-    # spectrum2 = [90=freq_bins=channels, 90, blocks]
-    fig, axes = plt.subplots(nrows=2, ncols=5)
-    for i, ax in enumerate(axes.flat):
-        im = ax.imshow(np.flip(spectrum2[:, :, i], axis=0), cmap='gray', vmin=vmin, vmax=vmax, interpolation='none')
-
-    fig.subplots_adjust(right=0.8)
-    cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
-    fig.colorbar(im, cax=cbar_ax)
-    plt.show()
-
-    # modify spectrum2
-    spectrum2_mod = np.where(np.abs(spectrum2) < 1000, 0, spectrum2)
-    print(np.shape(spectrum2_mod), np.count_nonzero(spectrum2_mod))
-    spectrum2_modified = mdct.inverse_transform(spectrum2_mod, H_inv)[:, 90:]
-    spectrum2_modified = np.expand_dims(spectrum2_modified, axis=0)  # add channel dimension again
-    fig, (ax1, ax2, ax3) = plt.subplots(nrows=3)
-    codec_utils.plot_spectrogram(ax1, spectrum)
-    codec_utils.plot_spectrogram(ax2, spectrum_modified)
-    codec_utils.plot_spectrogram(ax3, spectrum2_modified)
-    plt.show()
-
-    # reproduce original waveform
-    wave_reproduced = mdct.inverse_transform(spectrum2_modified, mdct_setup)
-
-    play_wav(wave_reproduced.numpy(), sample_rate)
-    save_wav(audio_filepath + 'asot_02_cosmos_sr8100_118_128_reconstructed.wav', wave_reproduced.numpy(), sample_rate)
-
-    exit()
+    audio_filename = 'asot_02_cosmos_sr8100_118_128'
+    sample_rate = 90 * 90  # None   # 90*90
+    wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
 
     # modify signal
     print('Modifying signal...')
@@ -211,6 +118,85 @@ def main():
     filepath, ext = os.path.splitext(audio_filepath + audio_filename)
     decoded_filepath = filepath + '_reconstructed.wav'
     save_wav(decoded_filepath, wave_data_reconstructed, sample_rate)
+
+    return
+
+
+def test_psychoacoustic():
+    # load audio file
+    # audio_filepath = './data/'
+    # audio_filename = 'sine'
+    # sample_rate = 90 * 90  # None   # 90*90
+    # wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
+    wave_data, sample_rate = sine_wav(1.0, 3.95*787.5, 44100, 1.0)
+
+    play_wav(wave_data, sample_rate)
+
+    # setup
+    filter_bands_n = 210
+    mdct_setup = mdct.setup(filter_bands_n)
+    psychoacoustic_init = psychoacoustic.setup(sample_rate, filter_bands_n, bark_bands_n=24, alpha=0.6)
+
+    # manipulate signal
+    wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
+    spectrum = mdct.transform(wave_data, mdct_setup)
+    spectrum_modified = psychoacoustic.psychoacoustic_filter(spectrum, psychoacoustic_init, drown=0.0)
+    wave_reproduced = mdct.inverse_transform(spectrum_modified, mdct_setup)
+
+    # plot both spectrograms
+    fig, (ax1, ax2) = plt.subplots(nrows=2)
+    codec_utils.plot_spectrogram(ax1, spectrum, sample_rate, filter_bands_n)
+    codec_utils.plot_spectrogram(ax2, spectrum_modified, sample_rate, filter_bands_n)
+    plt.show()
+
+    # plot time-slice
+    if False:
+        freq_bin_slice = 5
+        plt.plot(spectrum_modified[0, freq_bin_slice, :])
+        plt.plot(spectrum_modified[0, freq_bin_slice + 1, :])
+        plt.plot(spectrum_modified[0, freq_bin_slice + 2, :])
+        plt.show()
+
+    play_wav(wave_reproduced, sample_rate)
+    # save_wav(audio_filepath + audio_filename + '_reconstructed.wav', wave_reproduced.numpy(), sample_rate)
+
+    return
+
+
+def test_mdct():
+    # load audio file
+    audio_filepath = './data/'
+    audio_filename = 'sine'   # 'asot_02_cosmos_sr8100_118_128.wav'
+    sample_rate = 90*90  # None   # 90*90
+    wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
+
+    # plot spectrum
+    filter_bands_n = 90
+    mdct_setup = mdct.setup(filter_bands_n, window_type='sine')
+
+    wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
+
+    spectrum = mdct.transform(wave_data, mdct_setup)
+    wave_reproduced = mdct.inverse_transform(spectrum, mdct_setup)
+
+    fig, ax = plt.subplots(nrows=1)
+    codec_utils.plot_spectrogram(ax, spectrum, sample_rate, filter_bands_n)
+    plt.show()
+
+    play_wav(wave_reproduced.numpy(), sample_rate)
+    save_wav(audio_filepath + audio_filename + '_reconstructed.wav', wave_reproduced.numpy(), sample_rate)
+
+    return
+
+
+def main():
+    # limit wav length to ~3min
+    # wave_data = wave_data[:, :2 ** 23]
+    #wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
+
+    test_psychoacoustic()
+
+    exit()
 
 
 if __name__ == "__main__":

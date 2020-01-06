@@ -41,7 +41,7 @@ def _polyphase_matrix(filters_n, window_type='vorbis'):
     """
     with tf.name_scope('poly_phase_matrix'):
         F_analysis = tf.expand_dims(
-            _filter_window_matrix(filters_n, window_type), axis=1)              # [filters_n, 1, filters_n]
+            _filter_window_matrix(filters_n, window_type), axis=1)                # [filters_n, 1, filters_n]
         D = _delay_matrix(filters_n)                                              # [2, filters_n, filters_n]
         polyphase_matrix = _polymatmul(F_analysis, D)                             # [filters_n, 2, filters_n]
 
@@ -247,7 +247,7 @@ def _polyphase2x(xp):
 
 
 def _dct4(samples):
-    """DCT4 transformation on axis=1 of samples
+    """Orthogonal DCT4 transformation on axis=1 of samples
 
         y_k = \\sqrt{2/N} \\sum_{n=0}^{N-1} x_n \\cos( \\pi/N (n+1/2) (k+1/2) )
 
@@ -264,6 +264,7 @@ def _dct4(samples):
                   tf.stack([tf.zeros(tf.shape(samples)), samples], axis=-1),
                   shape=[tf.shape(samples)[0], tf.shape(samples)[1], 2 * filters_n])
 
+    # factor \sqrt{2} needed to make it orthogonal
     y = math.sqrt(2) * tf.signal.dct(upsampled, type=3, axis=-1, norm='ortho')
 
     # down-sample again
@@ -297,18 +298,18 @@ def _polymatmul(A, F):
 def normalize_mdct(mdct_amplitudes):
     """With an audio signal in the -1..1 range, the mdct amplitudes are maximally of the order of \sqrt{2 filter_n}
     as can be seen from the dct4 formula.
-    Assuming a 100dBSPL maximum sound level limit, we rescale the mdct amplitudes to dB scale with:
-       mdct_dB   = 20 \\log_{10}( 10^5 mdct_{ampl} / \\sqrt{2*filter_n})
+    Assuming a 100dBSPL maximum sound level limit for these maximal amplitude, we rescale the mdct amplitudes
+    to dB scale with:
+       mdct_dB   = 20. \\log_{10}( 10^5 mdct_{ampl} / \\sqrt{2*filter_n})
     Now, we linearly rescale within the -20dB..100dB range and map on 0..1:
-       mdct_norm = 1/6 \\log_{10}( 10^6 mdct_{ampl} / \\sqrt{2*filter_n})
+       mdct_norm = 1./6. \\max(0., \\log_{10}( 10^6 mdct_{ampl} / \\sqrt{2*filter_n}))
     Sign of amplitude is used as sign of normalized output.
 
     :param mdct_amplitudes: -inf..inf  [channels_n, #blocks, filter_bands_n]
     :return:                -1..1      [channels_n, #blocks, filter_bands_n]
     """
-    tf.print('normalizing...')
     mdct_norm = tf.sign(mdct_amplitudes) / 6. * \
-                tf.maximum(tf.math.log(tf.abs(mdct_amplitudes) * 10.**6 / math.sqrt(2.*mdct_amplitudes.shape[2])), 0.0) / \
+                tf.maximum(tf.math.log1p(tf.abs(mdct_amplitudes) * 10.**6 / math.sqrt(2.*mdct_amplitudes.shape[2]) - 1.), 0.0) / \
                 tf.math.log(10.)
 
     return tf.clip_by_value(mdct_norm, -1., 1.)
