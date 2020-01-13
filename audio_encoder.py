@@ -5,6 +5,7 @@
 
 import os
 import winsound
+import imageio
 
 import tensorflow as tf
 import numpy as np
@@ -16,9 +17,10 @@ import matplotlib.animation as animation
 
 from audiocodec import codec_utils, psychoacoustic, mdct, codec
 
-# todo: 0. mdct: check for precision errors -- why do we get all this noisy stuff in the spectrogram... (not the phase!)
-# todo: 1.1 move all psychoacoustic filter to the normalized mdct space (speedup...)
-# todo: 1.2 add psychoacoustic filters to arsenal (noise-filter, zero filter, LReLU filter) (move trancegan code)
+# todo: 1.1 move psychoacoustic filter to norm space
+# todo: 1.2 test smearing in time space
+# todo: 1.3 make LReLU filter fully differentiable!
+
 
 CPU_ONLY = False
 DEBUG = False
@@ -65,6 +67,7 @@ def load_wav(audio_filepath, sample_rate=None):
 
     if wave_data.ndim == 1:
         wave_data = np.reshape(wave_data, [1, wave_data.shape[0]])
+    wave_data = tf.convert_to_tensor(wave_data, dtype=tf.float32)
     print('done (sample rate = {})'.format(sample_rate))
     return wave_data, sample_rate
 
@@ -122,81 +125,167 @@ def test_codec():
     return
 
 
-def test_psychoacoustic():
-    # load audio file
-    # audio_filepath = './data/'
-    # audio_filename = 'sine'
-    # sample_rate = 90 * 90  # None   # 90*90
-    # wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
-    wave_data, sample_rate = sine_wav(1.0, 3.95*787.5, 44100, 1.0)
-
-    play_wav(wave_data, sample_rate)
-
+def test_dB_level():
     # setup
-    filter_bands_n = 210
-    mdct_setup = mdct.setup(filter_bands_n)
+    filter_bands_n = 512
+    sample_rate = 44100
+
+    # load wav
+    audio_filepath = './data/'
+    audio_filename = 'asot_02_cosmos'
+    wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
+    wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
+    wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
+    # wave_data, sample_rate = sine_wav(1.0, 3.95*787.5, sample_rate, 1.0)
+
+    fig, ax = plt.subplots()
+    ims = codec_utils.plot_spectrum(ax, wave_data, channels=[0], blocks=range(10, 20),
+                                    sample_rate=sample_rate, filter_bands_n=filter_bands_n)
+    _ = animation.ArtistAnimation(fig, ims, interval=500)
+    plt.show()
+
+
+def play_from_im():
+    # setup
+    filter_bands_n = 90   # needs to be even 44100 = 490 x 90
+    sample_rate = 90*90   # try to have +/- 10ms per freq bin (~speed of neurons)
+    drown = .90
+    mdct_setup = mdct.setup(filter_bands_n, dB_max=psychoacoustic._dB_MAX)
+
+    image_filepath = './data/'
+    image_filename = 'asot_02_cosmos'   # 'asot_02_cosmos_sr8100_118_128.wav'
+    image_filename_post_fix = '_sr{0:.0f}_118_128_{1:03.0f}_edit1'.format(sample_rate, 100*drown)
+
+    spectrum_modified = codec_utils.read_spectrogram(image_filepath + image_filename + image_filename_post_fix + ".png")
+    wave_reproduced = mdct.inverse_transform(spectrum_modified, mdct_setup)
+
+    play_wav(wave_reproduced, sample_rate)
+    if image_filename is not None:
+        save_wav(image_filepath + image_filename + image_filename_post_fix + '_from_image.wav', wave_reproduced, sample_rate)
+
+
+def test_psychoacoustic():
+    # setup
+    filter_bands_n = 90   # needs to be even 44100 = 490 x 90
+    sample_rate = 90*90   # try to have +/- 10ms per freq bin (~speed of neurons)
+    drown = .90
+    mdct_setup = mdct.setup(filter_bands_n, dB_max=psychoacoustic._dB_MAX)
     psychoacoustic_init = psychoacoustic.setup(sample_rate, filter_bands_n, bark_bands_n=24, alpha=0.6)
 
-    # manipulate signal
+    # load audio file
+    # audio_filename = None
+    audio_filepath = './data/'
+    audio_filename = 'asot_02_cosmos'   # 'asot_02_cosmos_sr8100_118_128.wav'
+    audio_filename_post_fix = '_sr{0:.0f}_118_128_{1:03.0f}'.format(sample_rate, 100*drown)
+    wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
+    wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
+    # wave_data, sample_rate = sine_wav(1.0, 3.95*787.5, sample_rate, 1.0)
     wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
+
+    # play_wav(wave_data, sample_rate)
+
+    # manipulate signal
     spectrum = mdct.transform(wave_data, mdct_setup)
-    spectrum_modified = psychoacoustic.psychoacoustic_filter(spectrum, psychoacoustic_init, drown=0.0)
+    spectrum_modified = psychoacoustic.psychoacoustic_filter(spectrum, psychoacoustic_init, drown)
+    codec_utils.save_spectrogram(spectrum_modified, audio_filepath + audio_filename + audio_filename_post_fix + ".png")
     wave_reproduced = mdct.inverse_transform(spectrum_modified, mdct_setup)
 
     # plot both spectrograms
-    fig, (ax1, ax2) = plt.subplots(nrows=2)
-    codec_utils.plot_spectrogram(ax1, spectrum, sample_rate, filter_bands_n)
-    codec_utils.plot_spectrogram(ax2, spectrum_modified, sample_rate, filter_bands_n)
-    plt.show()
+    if False:
+        fig, (ax1, ax2) = plt.subplots(nrows=2)
+        codec_utils.plot_spectrogram(ax1, spectrum, sample_rate, filter_bands_n)
+        codec_utils.plot_spectrogram(ax2, spectrum_modified, sample_rate, filter_bands_n)
+        plt.show()
+
 
     # plot time-slice
     if False:
         freq_bin_slice = 5
-        plt.plot(spectrum_modified[0, freq_bin_slice, :])
-        plt.plot(spectrum_modified[0, freq_bin_slice + 1, :])
-        plt.plot(spectrum_modified[0, freq_bin_slice + 2, :])
+        plt.plot(spectrum_modified[0, :, freq_bin_slice])
+        plt.plot(spectrum_modified[0, :, freq_bin_slice + 1])
+        plt.plot(spectrum_modified[0, :, freq_bin_slice + 2])
         plt.show()
 
     play_wav(wave_reproduced, sample_rate)
-    # save_wav(audio_filepath + audio_filename + '_reconstructed.wav', wave_reproduced.numpy(), sample_rate)
+    if audio_filename is not None:
+        save_wav(audio_filepath + audio_filename + audio_filename_post_fix + '_reconstructed.wav', wave_reproduced, sample_rate)
 
     return
 
 
+def test_mdct_precision():
+    # setup
+    filter_bands_n = 90
+    sample_rate = 90 * 90  # None   # 90*90
+    mdct_setup = mdct.setup(filter_bands_n, dB_max=psychoacoustic._dB_MAX, window_type='vorbis')
+
+    # load audio file
+    # audio_filepath = './data/'
+    # audio_filename = 'sine'   # 'asot_02_cosmos_sr8100_118_128.wav'
+    # wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
+
+    print("noise_amplitude delta_mean delta_std")
+    for noise_size in range(0, 300, 5):
+        noise_amplitude = noise_size * 10. ** (-8)
+
+        spectrum = []
+        errors = []
+        for i in range(100):
+            wave_data, sample_rate = sine_wav(1.0, 3.95 * 787.5, sample_rate, 1.0)
+            wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
+
+            # add noise:
+            wave_data = wave_data * (1. + noise_amplitude * tf.random.uniform(tf.shape(wave_data), minval=0., maxval=1.))
+
+            # manipulate signal
+            spectrum.append(mdct.transform(wave_data, mdct_setup))
+            if i > 0:
+                error = tf.abs(spectrum[-1] - spectrum[0])
+                error_on_small = tf.where(error > tf.abs(spectrum[0]), error, 0.)
+                errors.append(tf.reduce_max(error_on_small))
+
+        print("{0:17.15e} {1:17.15e} {2:17.15e}".format(noise_amplitude,
+                                                        tf.reduce_mean(errors), tf.math.reduce_std(errors)))
+
+
 def test_mdct():
+    # setup
+    filter_bands_n = 512
+    mdct_setup = mdct.setup(filter_bands_n, dB_max=psychoacoustic._dB_MAX, window_type='vorbis')
+
     # load audio file
     audio_filepath = './data/'
-    audio_filename = 'sine'   # 'asot_02_cosmos_sr8100_118_128.wav'
-    sample_rate = 90*90  # None   # 90*90
+    audio_filename = 'asot_02_cosmos'   # 'asot_02_cosmos_sr8100_118_128.wav'
+    sample_rate = 44100  # None   # 90*90
     wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
-
-    # plot spectrum
-    filter_bands_n = 90
-    mdct_setup = mdct.setup(filter_bands_n, window_type='sine')
-
+    wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
+    # wave_data, sample_rate = sine_wav(1.0, 3.95 * 787.5, sample_rate, 1.0)
     wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
 
+    # play input
+    play_wav(wave_data, sample_rate)
+
+    # manipulate signal
     spectrum = mdct.transform(wave_data, mdct_setup)
+    print(spectrum)
+    print(tf.reduce_max(spectrum))
     wave_reproduced = mdct.inverse_transform(spectrum, mdct_setup)
 
+    # plot spectrogram
     fig, ax = plt.subplots(nrows=1)
     codec_utils.plot_spectrogram(ax, spectrum, sample_rate, filter_bands_n)
     plt.show()
 
-    play_wav(wave_reproduced.numpy(), sample_rate)
-    save_wav(audio_filepath + audio_filename + '_reconstructed.wav', wave_reproduced.numpy(), sample_rate)
+    # play and save reconstructed wav
+    play_wav(wave_reproduced, sample_rate)
+    save_wav(audio_filepath + audio_filename + '_reconstructed.wav', wave_reproduced, sample_rate)
 
     return
 
 
 def main():
-    # limit wav length to ~3min
-    # wave_data = wave_data[:, :2 ** 23]
-    #wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
-
-    test_psychoacoustic()
-
-    exit()
+    # test_psychoacoustic()
+    play_from_im()
 
 
 if __name__ == "__main__":

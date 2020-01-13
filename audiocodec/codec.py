@@ -158,7 +158,7 @@ def _encode_chunk(wave_data, encoder_init, quality):
         mdct_amplitudes = mdct.transform(wave_data, H)
 
         # 2. Masking threshold calculation
-        mask_thresholds_bark = psychoacoustic.global_masking_threshold_in_bark(mdct_amplitudes, pa_setup) / quality
+        mask_thresholds_bark = psychoacoustic._global_masking_threshold_in_bark(mdct_amplitudes, pa_setup) / quality
 
         # 3. Use masking threshold to discretize each mdct amplitude
         # logarithmic discretization of masking threshold (#channels x #blocks x bark_bands_n)
