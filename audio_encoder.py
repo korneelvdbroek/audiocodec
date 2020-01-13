@@ -164,6 +164,42 @@ def play_from_im():
         save_wav(image_filepath + image_filename + image_filename_post_fix + '_from_image.wav', wave_reproduced, sample_rate)
 
 
+def test_gradient():
+    # setup
+    filter_bands_n = 90   # needs to be even 44100 = 490 x 90
+    sample_rate = 90*90   # try to have +/- 10ms per freq bin (~speed of neurons)
+    drown = .40
+    mdct_setup = mdct.setup(filter_bands_n, dB_max=psychoacoustic._dB_MAX)
+    psychoacoustic_init = psychoacoustic.setup(sample_rate, filter_bands_n, bark_bands_n=24, alpha=0.6)
+
+    # load audio file
+    # audio_filename = None
+    audio_filepath = './data/'
+    audio_filename = 'asot_02_cosmos'   # 'asot_02_cosmos_sr8100_118_128.wav'
+    audio_filename_post_fix = '_sr{0:.0f}_118_128_{1:03.0f}'.format(sample_rate, 100*drown)
+    wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
+    wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
+    # wave_data, sample_rate = sine_wav(1.0, 3.95*787.5, sample_rate, 1.0)
+    wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
+
+    # play_wav(wave_data, sample_rate)
+
+    # manipulate signal
+    mdct_ampl = mdct.transform(wave_data, mdct_setup)
+    mdct_norm = psychoacoustic.ampl_to_norm(mdct_ampl)
+
+    with tf.GradientTape() as d:
+        d.watch(mdct_norm)
+        mdct_amplitudes = psychoacoustic.norm_to_ampl(mdct_norm)
+        total_threshold = psychoacoustic.global_masking_threshold(mdct_amplitudes, psychoacoustic_init, drown)
+        total_masking_norm = psychoacoustic.ampl_to_norm(total_threshold)
+
+    diff_filter = d.gradient(total_masking_norm, mdct_norm)
+    tf.print(tf.shape(diff_filter))
+    tf.print(diff_filter)
+    return
+
+
 def test_psychoacoustic():
     # setup
     filter_bands_n = 90   # needs to be even 44100 = 490 x 90
@@ -185,18 +221,22 @@ def test_psychoacoustic():
     # play_wav(wave_data, sample_rate)
 
     # manipulate signal
-    spectrum = mdct.transform(wave_data, mdct_setup)
-    spectrum_modified = psychoacoustic.psychoacoustic_filter(spectrum, psychoacoustic_init, drown)
+    mdct_ampl = mdct.transform(wave_data, mdct_setup)
+    spectrum = psychoacoustic.ampl_to_norm(mdct_ampl)
+
+    # filter
+    spectrum_modified = psychoacoustic.lrelu_filter(spectrum, psychoacoustic_init, drown, beta=0.2)
     codec_utils.save_spectrogram(spectrum_modified, audio_filepath + audio_filename + audio_filename_post_fix + ".png")
-    wave_reproduced = mdct.inverse_transform(spectrum_modified, mdct_setup)
+
+    # back to audio signal
+    wave_reproduced = mdct.inverse_transform(psychoacoustic.norm_to_ampl(spectrum_modified), mdct_setup)
 
     # plot both spectrograms
-    if False:
+    if True:
         fig, (ax1, ax2) = plt.subplots(nrows=2)
-        codec_utils.plot_spectrogram(ax1, spectrum, sample_rate, filter_bands_n)
-        codec_utils.plot_spectrogram(ax2, spectrum_modified, sample_rate, filter_bands_n)
+        codec_utils.plot_spectrogram(ax1, psychoacoustic.norm_to_ampl(spectrum), sample_rate, filter_bands_n)
+        codec_utils.plot_spectrogram(ax2, psychoacoustic.norm_to_ampl(spectrum_modified), sample_rate, filter_bands_n)
         plt.show()
-
 
     # plot time-slice
     if False:
@@ -267,8 +307,6 @@ def test_mdct():
 
     # manipulate signal
     spectrum = mdct.transform(wave_data, mdct_setup)
-    print(spectrum)
-    print(tf.reduce_max(spectrum))
     wave_reproduced = mdct.inverse_transform(spectrum, mdct_setup)
 
     # plot spectrogram
@@ -285,7 +323,8 @@ def test_mdct():
 
 def main():
     # test_psychoacoustic()
-    play_from_im()
+    # play_from_im()
+    test_gradient()
 
 
 if __name__ == "__main__":

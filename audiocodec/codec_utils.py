@@ -22,7 +22,7 @@ def modify_signal(wave_data_np, sample_rate, filter_bands_n=1024, bark_bands_n=6
     # Encode to mdct freq domain
     mdct_amplitudes = mdct.transform(wave_data, H)
 
-    mdct_modified = psychoacoustic.psychoacoustic_filter(mdct_amplitudes, pa_setup)
+    mdct_modified = psychoacoustic.zero_filter(mdct_amplitudes, pa_setup)
 
     # Decode to time-domain
     wave_modified = mdct.inverse_transform(mdct_modified, H_inv)
