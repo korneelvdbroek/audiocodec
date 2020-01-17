@@ -6,9 +6,11 @@ Loosely based based on code from Gerald Schuller, June 2018 (https://github.com/
 """
 
 import tensorflow as tf
+import math
 
 _dB_MIN = 0.
 _dB_MAX = 100.
+_EPSILON = 1e-6
 
 
 def setup(sample_rate, filter_bands_n=1024, bark_bands_n=64, alpha=0.6):
@@ -181,9 +183,10 @@ def _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, samp
     # (SFM = 0dB for white noise, SFM << 0dB for pure tone)
     # tonality = 10./-60. * \log_10  (e^{1/N \sum_{filter_band_i} \ln(a_i^2)}) /
     #                                (1/N \sum_{filter_band_i} a_i^2)
+    mdct_intensity = tf.pow(mdct_amplitudes, 2)
     tonality = tf.minimum(1.0, 10 * tf.math.log(tf.divide(
-      tf.exp(tf.reduce_mean(tf.math.log(tf.pow(mdct_amplitudes, 2)), axis=2, keepdims=True)),
-      tf.reduce_mean(tf.pow(mdct_amplitudes, 2), axis=2, keepdims=True))) / (-60.0 * tf.math.log(10.0)))
+      tf.exp(tf.reduce_mean(tf.math.log(tf.maximum(_EPSILON**2, mdct_intensity)), axis=2, keepdims=True)),
+      tf.reduce_mean(mdct_intensity, axis=2, keepdims=True))) / (-60.0 * math.log(10.0)))
     # add bark_bands_n dimension: [#channels, #blocks, bark_bands_n]
     tonality = tf.tile(tonality, multiples=[1, 1, bark_bands_n])
 
@@ -201,7 +204,11 @@ def _masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, samp
     # Non-linear superposition (see p13 ./docs/05_shl_AC_Psychacoustics_Models_WS-2016-17_gs.pdf)
     # \alpha ~ 0.3 is valid for 94 bark_bands_n; with less bark_bands_n 0.3 leads to (way) too much masking
     amplitudes_in_bark = _mapping2bark(mdct_amplitudes, W)
-    return tf.pow(tf.einsum('cbi,cbij->cbj', tf.pow(amplitudes_in_bark, 2. * alpha), masking_matrix), 1. / (2. * alpha))
+    intensity_in_bark = tf.pow(tf.maximum(_EPSILON, amplitudes_in_bark), 2. * alpha)
+    masking_intensity_in_bark = tf.einsum('cbi,cbij->cbj', intensity_in_bark, masking_matrix)
+    masking_amplitude_in_bark = tf.pow(tf.maximum(_EPSILON**2, masking_intensity_in_bark), 1. / (2. * alpha))
+
+    return masking_amplitude_in_bark
 
 
 def _spreading_matrix_in_bark(sample_rate, bark_bands_n, alpha):
@@ -301,8 +308,8 @@ def _bark_freq_mapping(sample_rate, bark_bands_n, filter_bands_n):
 
     # (bark_band_n x bark_band_n) . (bark_band_n x filter_bank_n)
     W_transpose = tf.transpose(W, perm=[1, 0])
-    W_inv = tf.tensordot(tf.linalg.diag(tf.pow(1.0 / (1e-6 + tf.reduce_sum(W_transpose, axis=1)), 0.5)), W_transpose,
-                         axes=[[1], [0]])
+    W_inv = tf.tensordot(tf.linalg.diag(tf.pow(1.0 / tf.maximum(_EPSILON**2, tf.reduce_sum(W_transpose, axis=1)), 0.5)),
+                         W_transpose, axes=[[1], [0]])
 
     return W, W_inv
 
@@ -315,9 +322,14 @@ def _mapping2bark(mdct_amplitudes, W):
 
     :param mdct_amplitudes:  vector of mdct amplitudes (spectrum) for each filter [#channels, #blocks, filter_bands_n]
     :param W:                matrix to convert from filter bins to bark bins [filter_bands_n, bark_bands_n]
-    :return:                 vector of signal amplitudes of the Bark bands [#channels, #blocks, bark_bands_n]
+    :return:                 vector of (positive!) signal amplitudes of the Bark bands [#channels, #blocks, bark_bands_n]
     """
-    return tf.pow(tf.tensordot(tf.pow(mdct_amplitudes, 2), W, axes=[[2], [0]]), 0.5)
+    # tf.maximum() is necessary, to make sure rounding errors don't make the gradient nan!
+    mdct_intensity = tf.pow(mdct_amplitudes, 2)
+    mdct_intensity_in_bark = tf.tensordot(mdct_intensity, W, axes=[[2], [0]])
+    mdct_amplitudes_in_bark = tf.pow(tf.maximum(_EPSILON**2, mdct_intensity_in_bark), 0.5)
+
+    return mdct_amplitudes_in_bark
 
 
 def _mappingfrombark(amplitudes_bark, W_inv):
@@ -352,7 +364,7 @@ def ampl_to_norm(mdct_amplitudes):
     # this formula clips the very small amplitudes (so log() does not become negative)
     mdct_dB = tf.sign(mdct_amplitudes) * 20. * \
               tf.maximum(
-                  tf.math.log1p(tf.abs(mdct_amplitudes) - 1.),
+                  tf.math.log(tf.maximum(_EPSILON, tf.abs(mdct_amplitudes))),
                   0.0) / tf.math.log(10.)
 
     mdct_norm = dB_to_norm(mdct_dB)

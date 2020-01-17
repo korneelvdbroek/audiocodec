@@ -168,7 +168,7 @@ def test_gradient():
     # setup
     filter_bands_n = 90   # needs to be even 44100 = 490 x 90
     sample_rate = 90*90   # try to have +/- 10ms per freq bin (~speed of neurons)
-    drown = .40
+    drown = 0.0
     mdct_setup = mdct.setup(filter_bands_n, dB_max=psychoacoustic._dB_MAX)
     psychoacoustic_init = psychoacoustic.setup(sample_rate, filter_bands_n, bark_bands_n=24, alpha=0.6)
 
@@ -187,16 +187,36 @@ def test_gradient():
     # manipulate signal
     mdct_ampl = mdct.transform(wave_data, mdct_setup)
     mdct_norm = psychoacoustic.ampl_to_norm(mdct_ampl)
+    mdct_norm = mdct_norm[0:1, :, :]
 
+    # filter (strong beta to make visual difference)
+    spectrum_modified = psychoacoustic.lrelu_filter(mdct_norm, psychoacoustic_init, drown, beta=0.01)
+
+    # plot
+    fig, (ax1, ax2) = plt.subplots(nrows=2)
+    codec_utils.plot_spectrogram(ax1, psychoacoustic.norm_to_ampl(mdct_norm), sample_rate, filter_bands_n)
+    codec_utils.plot_spectrogram(ax2, psychoacoustic.norm_to_ampl(spectrum_modified), sample_rate, filter_bands_n)
+    plt.show()
+
+    # vary each of the entries of mdct_amplitude and see impact on chosen entry of total_masking_norm
+    channel = 0
+    block = 1
+    freq_bin = 14
     with tf.GradientTape() as d:
         d.watch(mdct_norm)
-        mdct_amplitudes = psychoacoustic.norm_to_ampl(mdct_norm)
-        total_threshold = psychoacoustic.global_masking_threshold(mdct_amplitudes, psychoacoustic_init, drown)
-        total_masking_norm = psychoacoustic.ampl_to_norm(total_threshold)
 
-    diff_filter = d.gradient(total_masking_norm, mdct_norm)
-    tf.print(tf.shape(diff_filter))
-    tf.print(diff_filter)
+        # check gradients!!!!!
+        total_masking_norm = psychoacoustic.lrelu_filter(mdct_norm, psychoacoustic_init, drown, beta=0.2)
+
+        element = total_masking_norm[channel, block, freq_bin]
+
+    diff_filter = d.gradient(element, mdct_norm)
+
+    tf.print(diff_filter, summarize=20)
+    tf.print(tf.shape(mdct_norm))
+    tf.print('this one shouldnt be nan ==> ', tf.reduce_sum(diff_filter))
+    tf.print('element = ', element)
+
     return
 
 
