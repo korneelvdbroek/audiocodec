@@ -6,37 +6,14 @@
 
 import imageio
 
-import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
 
-from audiocodec import psychoacoustic, mdct
-
-
-def modify_signal(wave_data_np, sample_rate, filter_bands_n=1024, bark_bands_n=64, alpha=0.6):
-  wave_data = tf.convert_to_tensor(wave_data_np, dtype=tf.float32)
-
-  filter_bands_n, H, H_inv = mdct.setup(filter_bands_n)
-  pa_setup = psychoacoustic.setup(sample_rate, filter_bands_n, bark_bands_n, alpha)
-
-  # Encode to mdct freq domain
-  mdct_amplitudes = mdct.transform(wave_data, H)
-
-  mdct_modified = psychoacoustic.zero_filter(mdct_amplitudes, pa_setup)
-
-  # Decode to time-domain
-  wave_modified = mdct.inverse_transform(mdct_modified, H_inv)
-
-  with tf.Session() as sess:
-    # writer = tf.summary.FileWriter("output", sess.graph)
-    wave_modified_out = sess.run(wave_modified)
-    # writer.close()
-
-  return wave_modified_out
+from audiocodec import psychoacoustic as pa
 
 
 def plot_spectrogram(ax, mdct_amplitudes, sample_rate, filter_bands_n, channel=0):
-  mdct_norm = psychoacoustic.ampl_to_norm(mdct_amplitudes)
+  mdct_norm = pa.ampl_to_norm(mdct_amplitudes)
   image = ax.imshow(np.flip(np.transpose(mdct_norm[channel, :, :]), axis=0), cmap='gray', vmin=-1., vmax=1., interpolation='none')
 
   # convert labels to Hz on y-axis
@@ -50,7 +27,7 @@ def plot_spectrogram(ax, mdct_amplitudes, sample_rate, filter_bands_n, channel=0
 
 
 def save_spectrogram(mdct_amplitudes, filepath, channel=0):
-  mdct_norm = psychoacoustic.ampl_to_norm(mdct_amplitudes)
+  mdct_norm = pa.ampl_to_norm(mdct_amplitudes)
   spectrum = np.flip(np.transpose(mdct_norm[channel, :, :]), axis=0)
 
   mdct_uint8 = 128. * (spectrum + 1.)
@@ -65,12 +42,12 @@ def read_spectrogram(filepath):
   spectrum = mdct_uint8 / 128. - 1.
   mdct_norm = np.transpose(np.flip(spectrum, axis=0))
   mdct_norm = np.expand_dims(mdct_norm, axis=0)
-  mdct_amplitudes = psychoacoustic.norm_to_ampl(mdct_norm)
+  mdct_amplitudes = pa.norm_to_ampl(mdct_norm)
   mdct_amplitudes = tf.cast(mdct_amplitudes, dtype=tf.float32)
   return mdct_amplitudes
 
 
-def plot_spectrum(ax, wave_data, channels, blocks, sample_rate, filter_bands_n=1024, bark_bands_n=64, alpha=0.6):
+def plot_spectrum(mdct, psychoacoustic, ax, wave_data, channels, blocks, sample_rate, filter_bands_n=1024, bark_bands_n=64, alpha=0.6):
   """Plots the mdct spectrum with quiet and masking threshold for a given channel and block
 
   :param ax:              matplotlib axes
@@ -83,20 +60,14 @@ def plot_spectrum(ax, wave_data, channels, blocks, sample_rate, filter_bands_n=1
   :param alpha            exponent for non-linear superposition of spreading functions
   :return:                image frames
   """
-  mdct_init = mdct.setup(filter_bands_n)
-  sample_rate, W, W_inv, quiet_threshold_in_bark, spreading_matrix, alpha = psychoacoustic.setup(sample_rate,
-                                                                                                 filter_bands_n,
-                                                                                                 bark_bands_n, alpha)
 
   # 1. MDCT analysis filter bank
-  mdct_norm = mdct.transform(wave_data, mdct_init)
-  mdct_dB = mdct.norm_to_dB(mdct_norm)
-  mdct_amplitudes = 10.**5. * mdct.dB_to_ampl(mdct_dB)
+  mdct_amplitudes = mdct.transform(wave_data)
 
   # 2. Masking threshold calculation
   sound_threshold = psychoacoustic._mappingfrombark(
-    psychoacoustic._masking_threshold_in_bark(mdct_amplitudes, W, spreading_matrix, alpha, sample_rate), W_inv)
-  quiet_threshold = psychoacoustic._mappingfrombark(quiet_threshold_in_bark, W_inv)
+    psychoacoustic._masking_threshold_in_bark(mdct_amplitudes))
+  quiet_threshold = psychoacoustic._mappingfrombark(psychoacoustic._quiet_threshold_amplitude_in_bark())
 
   # 3. Compute quantities to be plot
   max_frequency = sample_rate / 2

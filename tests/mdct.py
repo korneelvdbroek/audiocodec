@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import tensorflow as tf
 
-from audiocodec import mdct
+from audiocodec.mdct import MDCT
 
 EPS = 1e-6
 
@@ -18,17 +18,18 @@ def sine_wav(amplitude, frequency, sample_rate=44100, duration_sec=2.0):
 class TestMDCT(unittest.TestCase):
   def test_inverse_identity(self):
     """Check that x = MDCT^{-1}(MDCT(x))"""
+
     # mdct setup
     filters_n = 256
-    mdct_setup = mdct.setup(filters_n)
+    mdct = MDCT(filters_n)
 
     # create test signal
     wave_data = sine_wav(0.8, 880, sample_rate=16000, duration_sec=1.)
     wave_data = wave_data[:, 0:filters_n * int(wave_data.shape[1] / filters_n)]
 
     # transform and go back
-    spectrum = mdct.transform(wave_data, mdct_setup)
-    wave_reproduced = mdct.inverse_transform(spectrum, mdct_setup)
+    spectrum = mdct.transform(wave_data)
+    wave_reproduced = mdct.inverse_transform(spectrum)
 
     # compare original x with y = MDCT^{-1}(MDCT(x))
     zero = tf.reduce_max(tf.abs(wave_data - wave_reproduced[:, filters_n:-filters_n]))
