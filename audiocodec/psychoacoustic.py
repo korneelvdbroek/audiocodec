@@ -322,7 +322,7 @@ class PsychoacousticModel:
 
 
 def ampl_to_norm(mdct_amplitudes):
-  """Convert mdct amplitudes to normalized dB scale
+  """Point-wise converts mdct amplitudes to normalized dB scale
       dB = 20 log_10{ampl}
 
   :param mdct_amplitudes:  -inf..inf          [channels_n, #blocks, filter_bands_n]
@@ -340,7 +340,7 @@ def ampl_to_norm(mdct_amplitudes):
 
 
 def norm_to_ampl(mdct_norm):
-  """Convert mdct amplitudes in normalized dB scale to actual amplitude values
+  """Point-wise converts mdct amplitudes in normalized dB scale to actual amplitude values
       ampl = 10^{dB/20}
 
   :param mdct_norm:   -1..1              [channels_n, #blocks, filter_bands_n]
@@ -353,7 +353,7 @@ def norm_to_ampl(mdct_norm):
 
 
 def dB_to_norm(mdct_dB):
-  """Linearly normalize mdct amplitude expressed in dB (range -inf..inf) to -1..1 range
+  """Point-wise linearly normalize mdct amplitude expressed in dB (range -inf..inf) to -1..1 range
 
   :param mdct_dB: -inf..inf [dB]     [channels_n, #blocks, filter_bands_n]
   :return:        -1..1              [channels_n, #blocks, filter_bands_n]
@@ -365,7 +365,7 @@ def dB_to_norm(mdct_dB):
 
 
 def norm_to_dB(mdct_norm):
-  """Convert normalized mdct amplitudes in -1..1 range to amplitude in dB (range -inf..inf)
+  """Point-wise convert normalized mdct amplitudes in -1..1 range to amplitude in dB (range -inf..inf)
 
   :param mdct_norm: -1..1            [channels_n, #blocks, filter_bands_n]
   :return:          -inf..inf [dB]   [channels_n, #blocks, filter_bands_n]

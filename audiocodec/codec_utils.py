@@ -12,9 +12,9 @@ import numpy as np
 from audiocodec import psychoacoustic as pa
 
 
-def plot_spectrogram(ax, mdct_amplitudes, sample_rate, filter_bands_n, channel=0):
-  mdct_norm = pa.ampl_to_norm(mdct_amplitudes)
-  image = ax.imshow(np.flip(np.transpose(mdct_norm[channel, :, :]), axis=0), cmap='gray', vmin=-1., vmax=1., interpolation='none')
+def plot_spectrogram(ax, mdct_norm, sample_rate, filter_bands_n, channel=0):
+  image = ax.imshow(np.flip(np.transpose(mdct_norm[channel, :, :]), axis=0),
+                    cmap='gray', vmin=-1., vmax=1., interpolation='none')
 
   # convert labels to Hz on y-axis
   bottom, top = ax.get_ylim()
@@ -23,7 +23,45 @@ def plot_spectrogram(ax, mdct_amplitudes, sample_rate, filter_bands_n, channel=0
   filter_band_width = max_frequency / filter_bands_n
   ax.set_yticks([filter_bands_n - (f/filter_band_width - .5) for f in ytick_locations])
   ax.set_yticklabels(["{0:3.0f}".format(f) for f in ytick_locations])
+
+  # x axis is time
+  blocks = tf.shape(mdct_norm)[1].numpy()
+  blocks_per_sec = sample_rate / filter_bands_n
+  duration = blocks / blocks_per_sec
+  ax.set_xticks([t * blocks_per_sec for t in range(int(duration))])
+  ax.set_xticklabels(["{0:3.0f}".format(t) for t in range(int(duration))])
+
   return image
+
+
+def plot_logspectrogram(ax, mdct_norm, sample_rate, filter_bands_n, channel=0):
+  # [channel, block, octave, note]
+  #
+  tiled_mdct = [entry.numpy() for block in range(tf.shape(mdct_norm)[1]) for entry in (mdct_norm[channel, block, :, :],
+                                                                                       -tf.ones([1, tf.shape(mdct_norm)[3]]))]
+  tiled_mdct = np.vstack(tiled_mdct)
+  image = ax.imshow(np.flip(np.transpose(tiled_mdct), axis=0),
+                    cmap='gray', vmin=-1., vmax=1., interpolation='none')
+
+  # x axis is time
+  blocks = tf.shape(mdct_norm)[1].numpy()
+  blocks_per_sec = sample_rate / filter_bands_n
+  duration = blocks / blocks_per_sec
+  octaves = tf.shape(mdct_norm)[2].numpy()
+  ax.set_xticks([t * (octaves+1) * blocks_per_sec for t in range(int(duration))])
+  ax.set_xticklabels(["{0:3.0f}".format(t) for t in range(int(duration))])
+  return image
+
+
+def plot_logspectrum(ax, mdct_norm, sample_rate, filter_bands_n, channel=0):
+  image_frames = []
+  blocks_per_sec = sample_rate / filter_bands_n
+  for block in range(tf.shape(mdct_norm)[1]):
+    image = ax.imshow(np.flip(np.transpose(mdct_norm[channel, block, :, :]), axis=0),
+                      cmap='gray', vmin=-1., vmax=1., interpolation='none')
+    txt = ax.text(0.05, 0.90, "{0:3.1f}".format(block / blocks_per_sec))
+    image_frames.append([image, txt])
+  return image_frames
 
 
 def save_spectrogram(mdct_amplitudes, filepath, channel=0):

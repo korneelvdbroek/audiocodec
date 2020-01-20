@@ -10,13 +10,14 @@ import math
 
 
 class MDCT:
-  def __init__(self, filters_n=1024, dB_max=100, window_type='vorbis'):
+  def __init__(self, filters_n=1024, dB_max=100.0, window_type='vorbis'):
     """Computes required initialization matrices (stateless, no OOP)
     Note: H and H_inv are very sparse (2xfilter_n non-zero elements, arranged in diamond shape),
     yet TF2.0 does not support tf.nn.convolution for SparseTensor
     todo: work out polymatmul(x_pp, H) and polymatmul(y, H_inv) in more efficient way
 
     :param filters_n:   number of filter bands of the filter bank (needs to be even)
+    :param dB_max:      scale factor which determines maximum possible amplitude (in dB) of an mdct amplitude
     :param window_type: None, 'sine' or 'vorbis' (default) to select window type
     :return:            tuple with pre-computed required for encoder and decoder
     """

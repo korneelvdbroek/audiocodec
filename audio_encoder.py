@@ -19,6 +19,7 @@ from audiocodec import codec_utils, codec
 from audiocodec.mdct import MDCT
 from audiocodec.psychoacoustic import PsychoacousticModel, _dB_MAX
 from audiocodec import psychoacoustic as pa
+from audiocodec.logspectrogram import Spectrogram
 
 
 # note: local install https://packaging.python.org/tutorials/installing-packages/#installing-from-a-local-src-tree
@@ -197,8 +198,8 @@ def test_gradient():
 
   # plot
   fig, (ax1, ax2) = plt.subplots(nrows=2)
-  codec_utils.plot_spectrogram(ax1, pa.norm_to_ampl(mdct_norm), sample_rate, filter_bands_n)
-  codec_utils.plot_spectrogram(ax2, pa.norm_to_ampl(spectrum_modified), sample_rate, filter_bands_n)
+  codec_utils.plot_spectrogram(ax1, mdct_norm, sample_rate, filter_bands_n)
+  codec_utils.plot_spectrogram(ax2, spectrum_modified, sample_rate, filter_bands_n)
   plt.show()
 
   # vary each of the entries of mdct_amplitude and see impact on chosen entry of total_masking_norm
@@ -223,11 +224,56 @@ def test_gradient():
   return
 
 
+def test_octave():
+  # setup
+  filter_bands_n = 90   # needs to be even 44100 = 490 x 90
+  sample_rate = 90*90   # try to have +/- 10ms per freq bin (~speed of neurons)
+  drown = .95
+  mdct = MDCT(filter_bands_n, dB_max=_dB_MAX)
+  psychoacoustic = PsychoacousticModel(sample_rate, filter_bands_n, bark_bands_n=24, alpha=0.6)
+  logspectrumconvertor = Spectrogram(sample_rate, filter_bands_n)
+
+  # load audio file
+  # audio_filename = None
+  audio_filepath = './data/'
+  audio_filename = 'asot_02_cosmos'   # 'asot_02_cosmos_sr8100_118_128.wav'
+  audio_filename_post_fix = '_sr{0:.0f}_118_128_{1:03.0f}'.format(sample_rate, 100*drown)
+  wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
+  wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
+  # wave_data, sample_rate = sine_wav(1.0, 3.95*787.5, sample_rate, 1.0)
+  wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
+
+  # manipulate signal
+  mdct_ampl = mdct.transform(wave_data)
+  spectrum = pa.ampl_to_norm(mdct_ampl)
+
+  # filter
+  spectrum_modified = psychoacoustic.lrelu_filter(spectrum, drown, beta=0.001)
+  log_spectrum = logspectrumconvertor.freq_to_note(spectrum_modified)
+
+  if False:
+    fig, (ax1, ax2) = plt.subplots(nrows=2)
+    codec_utils.plot_spectrogram(ax1, spectrum_modified, sample_rate, filter_bands_n)
+    codec_utils.plot_logspectrogram(ax2, log_spectrum, sample_rate, filter_bands_n)
+    plt.show()
+
+  fig, (ax1, ax2, ax3) = plt.subplots(nrows=3)
+  codec_utils.plot_spectrogram(ax1, spectrum_modified, sample_rate, filter_bands_n)
+  codec_utils.plot_logspectrogram(ax2, log_spectrum, sample_rate, filter_bands_n)
+  ims = codec_utils.plot_logspectrum(ax3, log_spectrum, sample_rate, filter_bands_n)
+  _ = animation.ArtistAnimation(fig, ims, interval=1/90.0*1000*2.0)
+  plt.show()
+
+  # todo: check inversion!
+
+  return
+
+
 def test_psychoacoustic():
   # setup
   filter_bands_n = 90   # needs to be even 44100 = 490 x 90
   sample_rate = 90*90   # try to have +/- 10ms per freq bin (~speed of neurons)
-  drown = .90
+  drown = .80
   mdct = MDCT(filter_bands_n, dB_max=_dB_MAX)
   psychoacoustic = PsychoacousticModel(sample_rate, filter_bands_n, bark_bands_n=24, alpha=0.6)
 
@@ -257,8 +303,8 @@ def test_psychoacoustic():
   # plot both spectrograms
   if True:
     fig, (ax1, ax2) = plt.subplots(nrows=2)
-    codec_utils.plot_spectrogram(ax1, pa.norm_to_ampl(spectrum), sample_rate, filter_bands_n)
-    codec_utils.plot_spectrogram(ax2, pa.norm_to_ampl(spectrum_modified), sample_rate, filter_bands_n)
+    codec_utils.plot_spectrogram(ax1, spectrum, sample_rate, filter_bands_n)
+    codec_utils.plot_spectrogram(ax2, spectrum_modified, sample_rate, filter_bands_n)
     plt.show()
 
   # plot time-slice
@@ -334,7 +380,7 @@ def test_mdct():
 
   # plot spectrogram
   fig, ax = plt.subplots(nrows=1)
-  codec_utils.plot_spectrogram(ax, spectrum, sample_rate, filter_bands_n)
+  codec_utils.plot_spectrogram(ax, pa.ampl_to_norm(spectrum), sample_rate, filter_bands_n)
   plt.show()
 
   # play and save reconstructed wav
@@ -349,8 +395,9 @@ def main():
   # test_mdct_precision()
   # test_psychoacoustic()
   # test_gradient()
-  play_from_im()
-  test_dB_level()
+  # play_from_im()
+  # test_dB_level()
+  test_octave()
 
 
 if __name__ == "__main__":
