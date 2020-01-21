@@ -264,8 +264,6 @@ def test_octave():
   _ = animation.ArtistAnimation(fig, ims, interval=1/90.0*1000*2.0)
   plt.show()
 
-  # todo: check inversion!
-
   return
 
 
