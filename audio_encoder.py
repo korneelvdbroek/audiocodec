@@ -14,6 +14,7 @@ import scipy.io.wavfile as wav
 import librosa
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from matplotlib.ticker import MultipleLocator
 
 from audiocodec import codec_utils, codec
 from audiocodec.mdct import MDCT
@@ -23,6 +24,23 @@ from audiocodec.logspectrogram import Spectrogram
 
 
 # note: local install https://packaging.python.org/tutorials/installing-packages/#installing-from-a-local-src-tree
+
+# basic guiding principles:
+# 1. why do we work in the freq. space? analogy with ear (assuming the resonance theory is correct)
+# 2. why mdct not fft? It has real valued coefficients, so we avoid the phase problem and only have a sign to track
+# 3. GAN training needs to be progressive (hierarchical) -- need to "blur" audio to reduce dimensions
+#    observation that freq. amplitudes in subsequent blocks oscillate
+#    --> so 2nd mdct transform and filter our dominant patterns (we again NEED to transform, since direct in time space
+#        there is no efficient way to separate important and unimportant)
+
+
+# todo: mdct2 -- use better blurring (instead of top_k): audio needs to be clean!
+#  ideas: 1. keep top_k per freq_bin (although this is not a global song approach...)
+#         2. actually blur the spectrum2 (BUT KEEP SIGNS!) --> blur by amplitude circle
+#  make sure adjacent bins are both kept (to prevent audio aliasses)
+#  not sure we need to clean the audio actually (unless artefacts remain later on...)
+# todo: find a time averaging method to smooth over time (and keep chords)
+
 
 CPU_ONLY = False
 DEBUG = False
@@ -54,6 +72,19 @@ def sine_wav(amplitude, frequency, sample_rate=44100, duration_sec=2.0):
   """
   wave_data = amplitude * np.sin(2.0 * np.pi * frequency * tf.range(0, sample_rate * duration_sec, dtype=tf.float32) / sample_rate)
   return tf.expand_dims(wave_data, axis=0), sample_rate
+
+
+def create_wav(sample_rate=44100):
+  """Create wav which contains sine wave
+  """
+  frequency = 220
+  amplitude = 0.5
+
+  wave_data = []
+  for f in [frequency * np.power(2., n) for n in range(4)]:
+    wave_data.extend(amplitude * np.sin(2.0 * np.pi * f * np.arange(0, sample_rate) / sample_rate))
+
+  return tf.cast(tf.expand_dims(wave_data, axis=0), dtype=tf.float32), sample_rate
 
 
 def load_wav(audio_filepath, sample_rate=None):
@@ -224,24 +255,138 @@ def test_gradient():
   return
 
 
+def test_mdct2():
+  # setup
+  # higher drown is better is filtering more with k!! (less weird sounds)
+  blocks_per_sec = 64
+  filter_bands_n = 64
+  drown = 0.2
+  sample_rate = filter_bands_n * blocks_per_sec
+  mdct = MDCT(filter_bands_n, dB_max=_dB_MAX, window_type='vorbis')
+  psychoacoustic = PsychoacousticModel(sample_rate, filter_bands_n, bark_bands_n=24, alpha=0.6)
+
+  # load audio file
+  audio_filepath = './data/'
+  audio_filename = 'asot_02_cosmos'   # 'asot_02_cosmos_sr8100_118_128.wav'
+  audio_filename_post_fix = '_sr{0:.0f}_118_128_{1:03.0f}'.format(sample_rate, 100 * drown)
+  wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
+  # wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
+  # wave_data, sample_rate = create_wav(sample_rate)
+  channel = 0
+  wave_data = wave_data[channel:(channel+1), 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
+  # wave_data, sample_rate = sine_wav(1.0, 3.95 * 787.5, sample_rate, 1.0)
+
+  # play input
+  # play_wav(wave_data, sample_rate)
+
+  # manipulate signal
+  spectrum_ampl = mdct.transform(wave_data)
+  spectrum_ampl = pa.ampl_to_norm(spectrum_ampl)
+
+  # psychoacoustic filter (filter out what's in-audible --> shows key patterns) ==> helps later mdct2 filter
+  spectrum = psychoacoustic.lrelu_filter(spectrum_ampl, drown, beta=0.000001)
+
+  # mdct on time axis of each freq bucket
+  # spectrumX = [#channels = freq_buckets, #blocks+1, filters_n]
+  pattern_length = blocks_per_sec
+  spectrumX = spectrum[:, ::2, :]  # sample blocks by skipping them!
+  spectrumX = tf.transpose(spectrumX[channel, 0:pattern_length * int(spectrumX.shape[1] / pattern_length), :], perm=[1, 0])
+  mdct2 = MDCT(pattern_length, dB_max=_dB_MAX, window_type='vorbis')
+  spectrum2 = mdct2.transform(spectrumX)
+  tf.print(tf.shape(spectrum2))
+
+  # filter (keep only dominant patterns) -- note: we are in ampl space
+  # seconds(4) x pattern_width(4) x ampl_freq_components(4)
+  if False:
+    k = 10000
+    cutoffs, _ = tf.math.top_k(tf.reshape(tf.abs(spectrum2), [-1]), k)
+    spectrum2_mods = tf.sign(spectrum2) * tf.where(tf.abs(spectrum2) > cutoffs[k-1], tf.abs(spectrum2), tf.zeros(tf.shape(spectrum2)))
+  elif False:
+    # [#freq_buckets, #blocks, #filters2_n]
+    intensity_raw = tf.pow(spectrum2, 2)
+    intensity = tf.transpose(intensity_raw, perm=[0, 2, 1])
+    intensity = tf.reshape(intensity, [-1, tf.shape(spectrum2)[2]])
+    intensity = tf.expand_dims(intensity, axis=-1)
+    kernel = 1./10. * tf.ones([10, 1, 1])
+    tf.print(tf.shape(intensity))
+    tf.print(tf.shape(kernel))
+    intensity_blurred = tf.nn.conv1d(intensity, kernel, stride=1, padding='SAME')
+    intensity_blurred = intensity_blurred[:, :, 0]
+    intensity_blurred = tf.reshape(intensity_blurred, [tf.shape(spectrum2)[0], tf.shape(spectrum2)[2], tf.shape(spectrum2)[1]])
+    intensity_blurred = tf.transpose(intensity_blurred, perm=[0, 2, 1])
+    tf.print(intensity_raw)
+    tf.print(intensity_blurred)
+    tf.print(tf.shape(intensity_blurred))
+    spectrum2_mods = tf.sign(spectrum2) * tf.pow(tf.maximum(intensity_blurred, pa._EPSILON), 1./2.)
+  else:
+    spectrum2_mods = spectrum2
+
+  # invert 2nd mdct
+  spectrum1_recon = mdct2.inverse_transform(spectrum2_mods)
+  # [#channels = freq_buckets, #blocks+2]
+  spectrum1_recon = spectrum1_recon[:, pattern_length:-pattern_length]
+  spectrum1_recon = tf.transpose(spectrum1_recon, perm=[1, 0])
+  spectrum1_recon = tf.expand_dims(spectrum1_recon, axis=0)
+
+  wave_reproduced = mdct.inverse_transform(pa.norm_to_ampl(spectrum1_recon))
+  # play and save reconstructed wav
+  # play_wav(wave_reproduced, sample_rate)
+  save_wav(audio_filepath + audio_filename + audio_filename_post_fix + '_reconstructed.wav', wave_reproduced, sample_rate)
+
+  # plot spectrogram
+  fig, (ax1, ax2, ax3, ax4) = plt.subplots(nrows=4)
+  # ax1
+  codec_utils.plot_spectrogram(ax1, spectrum, sample_rate, filter_bands_n)
+
+  # ax2
+  # [#freq_bins, #blocks, #pattern_length]
+  spectrum2_plot = tf.reshape(spectrum2, [-1, pattern_length])
+  spectrum2_plot = tf.expand_dims(spectrum2_plot, axis=0)
+  ax2.imshow(np.flip(np.transpose(spectrum2_plot[0, :, :]), axis=0),
+             cmap='gray', interpolation='none', aspect='auto')
+  ax2.xaxis.set_major_locator(MultipleLocator(tf.shape(spectrum2)[1].numpy()))
+
+  # ax3
+  spectrum2_mods_plot = tf.transpose(spectrum2_mods, perm=[1, 0, 2])
+  spectrum2_mods_plot = tf.reshape(spectrum2_mods_plot, [-1, pattern_length])
+  spectrum2_mods_plot = tf.expand_dims(spectrum2_mods_plot, axis=0)
+  ax3.imshow(np.flip(np.transpose(spectrum2_mods_plot[0, :, :]), axis=0),
+             cmap='gray', interpolation='none', aspect='auto')
+  ax3.xaxis.set_major_locator(MultipleLocator(tf.shape(spectrum2_mods)[0].numpy()))
+
+  # ax4
+  codec_utils.plot_spectrogram(ax4, spectrum1_recon, sample_rate, filter_bands_n)
+
+  plt.show()
+
+  return
+
+
 def test_octave():
   # setup
   filter_bands_n = 90   # needs to be even 44100 = 490 x 90
   sample_rate = 90*90   # try to have +/- 10ms per freq bin (~speed of neurons)
-  drown = .95
+  drown = .0
   mdct = MDCT(filter_bands_n, dB_max=_dB_MAX)
+
   psychoacoustic = PsychoacousticModel(sample_rate, filter_bands_n, bark_bands_n=24, alpha=0.6)
   logspectrumconvertor = Spectrogram(sample_rate, filter_bands_n)
 
   # load audio file
   # audio_filename = None
-  audio_filepath = './data/'
-  audio_filename = 'asot_02_cosmos'   # 'asot_02_cosmos_sr8100_118_128.wav'
-  audio_filename_post_fix = '_sr{0:.0f}_118_128_{1:03.0f}'.format(sample_rate, 100*drown)
-  wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
-  wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
-  # wave_data, sample_rate = sine_wav(1.0, 3.95*787.5, sample_rate, 1.0)
+  if False:
+    audio_filepath = './data/'
+    audio_filename = 'asot_02_cosmos'   # 'asot_02_cosmos_sr8100_118_128.wav'
+    audio_filename_post_fix = '_sr{0:.0f}_118_128_{1:03.0f}'.format(sample_rate, 100*drown)
+    wave_data, sample_rate = load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
+    wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
+  else:
+    wave_data, sample_rate = create_wav(sample_rate)
+    # wave_data, sample_rate = sine_wav(1.0, 3.95*787.5, sample_rate, 1.0)
   wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
+
+  # play sound
+  play_wav(wave_data, sample_rate)
 
   # manipulate signal
   mdct_ampl = mdct.transform(wave_data)
@@ -395,7 +540,8 @@ def main():
   # test_gradient()
   # play_from_im()
   # test_dB_level()
-  test_octave()
+  # test_octave()
+  test_mdct2()
 
 
 if __name__ == "__main__":

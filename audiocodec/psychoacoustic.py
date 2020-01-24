@@ -360,6 +360,9 @@ def dB_to_norm(mdct_dB):
   """
   mdct_norm = (tf.abs(mdct_dB) - _dB_MIN) / (_dB_MAX - _dB_MIN)
 
+  # tf.debugging.assert_less_equal(tf.reduce_max(mdct_norm), 1.,
+  #                                message="normalization is not in -1..1 range (clipping...)")
+
   # this formula clips the very large amplitudes
   return tf.clip_by_value(tf.sign(mdct_dB) * mdct_norm, -1., 1.)
 

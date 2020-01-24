@@ -14,22 +14,22 @@ from audiocodec import psychoacoustic as pa
 
 def plot_spectrogram(ax, mdct_norm, sample_rate, filter_bands_n, channel=0):
   image = ax.imshow(np.flip(np.transpose(mdct_norm[channel, :, :]), axis=0),
-                    cmap='gray', vmin=-1., vmax=1., interpolation='none')
+                    cmap='gray', vmin=-1., vmax=1., interpolation='none', aspect='auto')
 
   # convert labels to Hz on y-axis
-  bottom, top = ax.get_ylim()
-  ytick_locations = [y for y in [100, 200, 500, 1000, 2000, 5000, 10000, 20000] if y <= top]
-  max_frequency = sample_rate / 2  # Nyquist frequency: maximum frequency given a sample rate
-  filter_band_width = max_frequency / filter_bands_n
-  ax.set_yticks([filter_bands_n - (f/filter_band_width - .5) for f in ytick_locations])
-  ax.set_yticklabels(["{0:3.0f}".format(f) for f in ytick_locations])
-
-  # x axis is time
-  blocks = tf.shape(mdct_norm)[1].numpy()
-  blocks_per_sec = sample_rate / filter_bands_n
-  duration = blocks / blocks_per_sec
-  ax.set_xticks([t * blocks_per_sec for t in range(int(duration))])
-  ax.set_xticklabels(["{0:3.0f}".format(t) for t in range(int(duration))])
+  # bottom, top = ax.get_ylim()
+  # ytick_locations = [y for y in [100, 200, 500, 1000, 2000, 5000, 10000, 20000] if y <= top]
+  # max_frequency = sample_rate / 2  # Nyquist frequency: maximum frequency given a sample rate
+  # filter_band_width = max_frequency / filter_bands_n
+  # ax.set_yticks([filter_bands_n - (f/filter_band_width - .5) for f in ytick_locations])
+  # ax.set_yticklabels(["{0:3.0f}".format(f) for f in ytick_locations])
+  #
+  # # x axis is time
+  # blocks = tf.shape(mdct_norm)[1].numpy()
+  # blocks_per_sec = sample_rate / filter_bands_n
+  # duration = blocks / blocks_per_sec
+  # ax.set_xticks([t * blocks_per_sec for t in range(int(duration))])
+  # ax.set_xticklabels(["{0:3.0f}".format(t) for t in range(int(duration))])
 
   return image
 
