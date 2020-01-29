@@ -20,6 +20,37 @@ class Spectrogram:
     :param sample_rate:       sample_rate
     :param filter_bands_n:    number of filter bands of the filter bank
     """
+    # filter_bands_n <= 2^b-1   (b=octaves_n)
+    octaves_n = tf.math.ceil(tf.math.log(filter_bands_n + 1.) / tf.math.log(2.))
+    notes_n = 2**(octaves_n-1)
+
+    # filter_bands_n = 6 <= 2**3 - 1
+    # ijk = [freq_bin, octave, note]
+    #    1--1--1--1
+    #    2--2  3--3
+    #    4  5  6  X
+    # j: range(b); k: range(2**(b-1))
+    octave = tf.math.floor(tf.range(octaves_n * notes_n) / notes_n)
+    note = tf.range(octaves_n * notes_n) - octave * notes_n
+    filter_band_index = 2**octave + tf.math.floor((2**(octave+1) - 2**octave) * note / notes_n) - 1
+
+    indices = tf.dtypes.cast(tf.stack([filter_band_index, octave, note], axis=1), dtype=tf.int64)
+    filter_band_index = tf.dtypes.cast(filter_band_index, dtype=tf.int32)
+    # chop off frequencies which are not in the filter_bands index range
+    indices = tf.boolean_mask(indices, tf.math.less(filter_band_index, filter_bands_n))
+
+    log_spectrogram = tf.SparseTensor(indices, tf.ones(tf.shape(indices)[0]),
+                                      dense_shape=[filter_bands_n, octaves_n, notes_n])
+
+    _, idx, count = tf.unique_with_counts(indices[:, 0])
+    weights = 1. / tf.gather(tf.dtypes.cast(count, tf.float32), idx)
+    inv_log_spectrogram = tf.SparseTensor(indices, weights,
+                                          dense_shape=[filter_bands_n, octaves_n, notes_n])
+    # convert to dense
+    self.log_spectrogram = tf.sparse.to_dense(log_spectrogram)
+    self.inv_log_spectrogram = tf.sparse.to_dense(inv_log_spectrogram)
+
+  def init(self, sample_rate, filter_bands_n):
     max_frequency = sample_rate / 2  # Nyquist frequency: maximum frequency given a sample rate
 
     filter_band_width = max_frequency / filter_bands_n
