@@ -102,8 +102,8 @@ class Spectrogram:
   def freq_to_note(self, spectrum):
     """Convert from linear spectrogram to octave spectrogram
 
-    :param spectrum:         mdct amplitudes     [#channels, #blocks, filter_bands_n,     ]
-    :return:                 mdct amplitudes     [#channels, #blocks, (octaves_n, notes_n)]
+    :param spectrum:         mdct amplitudes     [..., filter_bands_n    ]
+    :return:                 mdct amplitudes     [..., octaves_n, notes_n]
     """
     return tf.tensordot(spectrum, self.log_spectrogram, axes=1)
 
@@ -111,7 +111,7 @@ class Spectrogram:
   def note_to_freq(self, octave_spectrum):
     """Convert from octave spectrogram to linear spectrogram
 
-    :param octave_spectrum:  mdct amplitudes     [#channels, #blocks, (octaves_n, notes_n)]
-    :return:                 mdct amplitudes     [#channels, #blocks, filter_bands_n      ]
+    :param octave_spectrum:  mdct amplitudes     [..., octaves_n, notes_n]
+    :return:                 mdct amplitudes     [..., filter_bands_n    ]
     """
     return tf.tensordot(octave_spectrum, self.inv_log_spectrogram, axes=2)
