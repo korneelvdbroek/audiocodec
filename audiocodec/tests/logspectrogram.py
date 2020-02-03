@@ -16,10 +16,10 @@ class TestSpectrogram(unittest.TestCase):
     blocks_n = 90
     sample_rate = blocks_n*filter_bands_n
     logspectrumconvertor = Spectrogram(sample_rate, filter_bands_n)
+
     # [batch, block, filter_bands_n]
     spectrum = tf.random.uniform([32, blocks_n, filter_bands_n])
     log_spectrum = logspectrumconvertor.freq_to_note(spectrum)
-
     self.assertLess(tf.reduce_max(logspectrumconvertor.note_to_freq(log_spectrum) - spectrum), EPS, "Should be zero")
 
 

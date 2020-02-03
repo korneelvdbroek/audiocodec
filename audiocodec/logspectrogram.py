@@ -34,23 +34,27 @@ class Spectrogram:
     note = tf.range(octaves_n * notes_n) - octave * notes_n
     filter_band_index = 2**octave + tf.math.floor((2**(octave+1) - 2**octave) * note / notes_n) - 1
 
+    # remove entries of transformation matrix which are out-of-range for the filter_band
     indices = tf.dtypes.cast(tf.stack([filter_band_index, octave, note], axis=1), dtype=tf.int64)
     filter_band_index = tf.dtypes.cast(filter_band_index, dtype=tf.int32)
-    # chop off frequencies which are not in the filter_bands index range
     indices = tf.boolean_mask(indices, tf.math.less(filter_band_index, filter_bands_n))
 
+    # define transformation matrix
     log_spectrogram = tf.SparseTensor(indices, tf.ones(tf.shape(indices)[0]),
                                       dense_shape=[filter_bands_n, octaves_n, notes_n])
 
+    # inverse transformation matrix
     _, idx, count = tf.unique_with_counts(indices[:, 0])
     weights = 1. / tf.gather(tf.dtypes.cast(count, tf.float32), idx)
     inv_log_spectrogram = tf.SparseTensor(indices, weights,
                                           dense_shape=[filter_bands_n, octaves_n, notes_n])
+
     # convert to dense
     self.log_spectrogram = tf.sparse.to_dense(log_spectrogram)
-    self.inv_log_spectrogram = tf.sparse.to_dense(inv_log_spectrogram)
+    self.inv_log_spectrogram = tf.transpose(tf.sparse.to_dense(inv_log_spectrogram), perm=[1, 2, 0])
 
   def init(self, sample_rate, filter_bands_n):
+    """Old __init___ to be removed later"""
     max_frequency = sample_rate / 2  # Nyquist frequency: maximum frequency given a sample rate
 
     filter_band_width = max_frequency / filter_bands_n
@@ -101,7 +105,7 @@ class Spectrogram:
     :param spectrum:         mdct amplitudes     [#channels, #blocks, filter_bands_n,     ]
     :return:                 mdct amplitudes     [#channels, #blocks, (octaves_n, notes_n)]
     """
-    return tf.einsum('bti,ijk->btjk', spectrum, self.log_spectrogram)
+    return tf.tensordot(spectrum, self.log_spectrogram, axes=1)
 
   @tf.function
   def note_to_freq(self, octave_spectrum):
@@ -110,4 +114,4 @@ class Spectrogram:
     :param octave_spectrum:  mdct amplitudes     [#channels, #blocks, (octaves_n, notes_n)]
     :return:                 mdct amplitudes     [#channels, #blocks, filter_bands_n      ]
     """
-    return tf.einsum('btjk,ijk->bti', octave_spectrum, self.inv_log_spectrogram)
+    return tf.tensordot(octave_spectrum, self.inv_log_spectrogram, axes=2)
