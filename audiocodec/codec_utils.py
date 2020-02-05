@@ -5,11 +5,79 @@
 """
 
 import imageio
+import winsound
+import os
 
 import tensorflow as tf
 import numpy as np
 
+import scipy.io.wavfile as wav
+
+import librosa
+
 from audiocodec import psychoacoustic as pa
+
+
+def play_wav(wave_data, sample_rate):
+  print("Playing wave data...", end=' ', flush=True)
+  audio_filepath = "temp.wav"
+  save_wav(audio_filepath, wave_data, sample_rate)
+  winsound.PlaySound(audio_filepath, winsound.SND_FILENAME)
+  os.remove(audio_filepath)
+  print("done")
+  return
+
+
+def sine_wav(amplitude, frequency, sample_rate=44100, duration_sec=2.0):
+  """Create wav which contains sine wave
+  """
+  wave_data = amplitude * np.sin(2.0 * np.pi * frequency * tf.range(0, sample_rate * duration_sec, dtype=tf.float32) / sample_rate)
+  return tf.expand_dims(wave_data, axis=0), sample_rate
+
+
+def create_wav(sample_rate=44100):
+  """Create wav which contains sine wave
+  """
+  frequency = 220
+  amplitude = 0.5
+
+  wave_data = []
+  for f in [frequency * np.power(2., n) for n in range(4)]:
+    wave_data.extend(amplitude * np.sin(2.0 * np.pi * f * np.arange(0, sample_rate) / sample_rate))
+
+  return tf.cast(tf.expand_dims(wave_data, axis=0), dtype=tf.float32), sample_rate
+
+
+def load_wav(audio_filepath, sample_rate=None):
+  """Read in wav file at given sample_rate.
+
+  :param audio_filepath: path and filename of wav file
+  :param sample_rate:    sample rate at which audio file needs to be read.
+                         If sample_rate is None (default), then original sample rate is preserved
+  :return:               raw wave data in range -1..1 (#channels x #audio_samples) and sample rate
+  """
+  print("Loading audio file {0}...".format(audio_filepath), end=' ', flush=True)
+  wave_data, sample_rate = librosa.core.load(audio_filepath, sr=sample_rate, mono=False)
+
+  if wave_data.ndim == 1:
+    wave_data = np.reshape(wave_data, [1, wave_data.shape[0]])
+  wave_data = tf.convert_to_tensor(wave_data, dtype=tf.float32)
+  print('done (sample rate = {0}, channels = {1})'.format(sample_rate, tf.shape(wave_data)[0]))
+  return wave_data, sample_rate
+
+
+def save_wav(audio_filepath, wave_data, sample_rate):
+  wave_data = wave_data.numpy().T
+  wave_data = np.clip(2**15 * wave_data, -2 ** 15, 2 ** 15 - 1)  # limit values in the array
+  wav.write(audio_filepath, sample_rate, np.int16(wave_data))
+  return
+
+
+def clip_wav(start, stop, wave_data, sample_rate):
+  minute_start, second_start = start
+  minute_stop, second_stop = stop
+
+  return wave_data[:, (minute_start*60+second_start)*sample_rate:(minute_stop*60+second_stop)*sample_rate]
 
 
 def plot_spectrogram(ax, mdct_norm, sample_rate, filter_bands_n, channel=0):
