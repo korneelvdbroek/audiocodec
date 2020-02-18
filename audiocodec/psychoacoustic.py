@@ -101,6 +101,9 @@ class PsychoacousticModel:
     :return:                    filtered normalized mdct amplitudes    [#channels, #blocks, filter_bands_n]
     """
     # get masking threshold in norm space
+    tf.debugging.assert_less_equal(tf.reduce_max(tf.abs(mdct_norm)), 1.,
+                                   "psychoacoustic.lrelu_filter inputs should be in the -1..1 range")
+
     mdct_amplitudes = norm_to_ampl(mdct_norm)
     total_threshold = self.global_masking_threshold(mdct_amplitudes, drown)
     total_masking_norm = ampl_to_norm(total_threshold)

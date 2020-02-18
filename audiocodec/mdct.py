@@ -33,6 +33,13 @@ class MDCT:
     """Decomposed part of poly-phase matrix of an MDCT filter bank, with a sine modulated window:
       H(z) = F_{analysis} x D x DCT4 =
 
+      The window function needs to satisfy:
+      1. w_n = w_{2N-1-n}        (symmetry)
+      2. w_n^2 + w_{n+N}^2 = 1   (Princen-Bradley)
+      So, effectively, one can compute that the transformation of the poly-phase matrix weights the input by
+         w_{i+N} x_i + \\sqrt{1-w_{i+N}^2} x_{N-i}
+      if input x's are maximal (1), then we need to weight with \\sqrt{2}
+
     :return:             F_{analysis} x D           [filters_n, filters_n, 2]
     """
     F_analysis = tf.expand_dims(
@@ -98,7 +105,8 @@ class MDCT:
     Return amplitude scaling:
     The dct4() amplitudes y_k are maximally of the order of
        x_{max} \\sqrt{2 filter_n}
-    as can be seen from the dct4 formula above, with x_{max} \approx 1.
+    as can be seen from the dct4 formula, with x_{max} \approx 1.
+    The poly-phase matrix H adds another factor of \\sqrt{2}
     These dct4() amplitudes are then rescaled by
        10^{_dB_MAX / 20.} / \\sqrt{2 filter_n}
     so the maximum output amplitudes are of the order of
@@ -116,7 +124,7 @@ class MDCT:
     mdct_amplitudes = self._dct4(self._polymatmul(x_pp, self.H))   # [#channels, #blocks+1, filters_n]
 
     # up-scale
-    return (self.dB_factor / tf.sqrt(2. * tf.cast(self.filters_n, dtype=tf.float32))) * mdct_amplitudes
+    return (self.dB_factor / tf.sqrt(4. * tf.cast(self.filters_n, dtype=tf.float32))) * mdct_amplitudes
 
   @tf.function
   def inverse_transform(self, mdct_amplitudes):
@@ -127,7 +135,7 @@ class MDCT:
     :return:                restored signal in range -1..1   [#channels, #samples]
                             where #samples = (#blocks + 1) x filters_n
     """
-    mdct_rescaled = (tf.sqrt(2. * tf.cast(self.filters_n, dtype=tf.float32)) / self.dB_factor) * mdct_amplitudes
+    mdct_rescaled = (tf.sqrt(4. * tf.cast(self.filters_n, dtype=tf.float32)) / self.dB_factor) * mdct_amplitudes
 
     # put y through inverse filter bank
     x_pp = self._polymatmul(self._dct4(mdct_rescaled), self.H_inv)
@@ -239,7 +247,7 @@ class MDCT:
         y_k = \\sqrt{2/N} \\sum_{n=0}^{N-1} x_n \\cos( \\pi/N (n+1/2) (k+1/2) )
 
     The dct4() amplitudes y_k are maximally of the order of
-       x_{max} \\sqrt{2 filter_n}
+       ~ \\sqrt{2/N} N = \\sqrt{2 N}
     as can be seen from the dct4 formula above.
     Note: DCT4 is its own reverse
 

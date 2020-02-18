@@ -554,23 +554,25 @@ def test_mdct_precision():
 
 def test_mdct():
   # setup
-  filter_bands_n = 512
+  filter_bands_n = 56
   mdct = MDCT(filter_bands_n, dB_max=_dB_MAX, window_type='vorbis')
 
   # load audio file
   audio_filepath = './data/'
   audio_filename = 'asot_02_cosmos'   # 'asot_02_cosmos_sr8100_118_128.wav'
-  sample_rate = 44100  # None   # 90*90
+  sample_rate = 56*64  # 4100  # None   # 90*90
   wave_data, sample_rate = codec_utils.load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
   wave_data = codec_utils.clip_wav((1, 18), (1, 28), wave_data, sample_rate)
   # wave_data, sample_rate = sine_wav(1.0, 3.95 * 787.5, sample_rate, 1.0)
   wave_data = wave_data[:, 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
 
   # play input
-  codec_utils.play_wav(wave_data, sample_rate)
+  # codec_utils.play_wav(wave_data, sample_rate)
 
   # manipulate signal
   spectrum = mdct.transform(wave_data)
+  tf.print(tf.shape(mdct.H))
+  tf.print(mdct.H, summarize=40)
   wave_reproduced = mdct.inverse_transform(spectrum)
 
   # plot spectrogram
@@ -585,8 +587,26 @@ def test_mdct():
   return
 
 
+def test_mdct_normalization():
+  filter_bands_n = 6
+  mdct = MDCT(filter_bands_n, dB_max=0., window_type='vorbis')
+
+  # wave_data = tf.random.uniform(shape=[100, filter_bands_n], minval=-1., maxval=1.)
+  # spectrum = mdct.transform(wave_data)
+  # tf.print(tf.reduce_max(tf.abs(spectrum)))
+
+  # spectrum = tf.random.uniform(shape=[100, 2, filter_bands_n], minval=-1., maxval=1.)
+  spectrum = tf.ones(shape=[1, 2, filter_bands_n])
+  wave_recon = mdct._dct4(spectrum)
+  tf.print(tf.reduce_max(tf.abs(wave_recon)))
+  tf.print(wave_recon)
+  tf.print(tf.sqrt(2. * filter_bands_n))
+
+
+
 def main():
-  test_mdct()
+  # test_mdct()
+  test_mdct_normalization()
   # test_mdct_precision()
   # test_psychoacoustic()
   # test_psychoacoustic_gradient()
