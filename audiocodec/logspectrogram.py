@@ -1,6 +1,9 @@
 # !/usr/bin/env python
 
 """Converts a linear spectrogram to a logarithmic spectrogram
+
+Note: non-private functions are decorated with tf.function.
+  When they are invoked as part of a bigger graphs they will be retraced, leading to a retracing warning.
 """
 
 import tensorflow as tf

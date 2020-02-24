@@ -3,6 +3,8 @@
 """ Psycho-acoustic model for lossy audio encoder (inspired by aac encoder)
 
 Loosely based based on code from Gerald Schuller, June 2018 (https://github.com/TUIlmenauAMS/Python-Audio-Coder)
+Note: non-private functions are decorated with tf.function.
+  When they are invoked as part of a bigger graphs they will be retraced, leading to a retracing warning.
 """
 
 import tensorflow as tf
@@ -97,7 +99,8 @@ class PsychoacousticModel:
 
     :param mdct_norm:           mdct amplitudes in rescaled dB         [#channels, #blocks, filter_bands_n]
     :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
-    :param beta:                slope of leaky part of the zeroing
+    :param beta:                percent of values below the threshold line which are let through but attenuated
+                                lower values will lead to larger gradients...
     :return:                    filtered normalized mdct amplitudes    [#channels, #blocks, filter_bands_n]
     """
     # get masking threshold in norm space
@@ -109,13 +112,28 @@ class PsychoacousticModel:
     total_masking_norm = ampl_to_norm(total_threshold)
 
     # LeakyReLU-based filter: suppress in-audible frequencies (in norm space)
+    noise = tf.random.uniform(tf.shape(mdct_norm), minval=0., maxval=1.)
     mdct_abs = tf.abs(mdct_norm)
-    mdct_norm_filtered = tf.where(mdct_abs <= tf.scalar_mul(1./(1.+beta), total_masking_norm),
-                                  tf.scalar_mul(beta, mdct_abs),
+    mdct_norm_filtered = tf.where(mdct_abs <= 1./(1.+beta) * total_masking_norm,
+                                  beta * mdct_norm * noise,
                                   tf.where(total_masking_norm <= mdct_abs,
-                                           mdct_abs,
-                                           tf.scalar_mul(1./beta, mdct_abs) + tf.scalar_mul(1. - 1./beta, total_masking_norm)))
-    mdct_norm_filtered = tf.multiply(tf.sign(mdct_norm), mdct_norm_filtered)
+                                           mdct_norm,
+                                           (1./beta * mdct_norm + tf.sign(mdct_norm) * (1. - 1./beta) * total_masking_norm)
+                                           * (1. - noise * (total_masking_norm - mdct_abs) / total_masking_norm * ((1. + beta) / beta)) ))
+
+    # This leads to horrible gradients...
+    # mdct_abs = tf.abs(mdct_norm)
+    # mdct_norm_filtered = tf.where(total_masking_norm <= mdct_abs,
+    #                               mdct_norm,
+    #                               0.0)
+
+    # LeakyReLU-based filter: suppress in-audible frequencies (in norm space)
+    mdct_abs = tf.abs(mdct_norm)
+    mdct_norm_filtered = tf.where(mdct_abs <= (1.-beta) * total_masking_norm,
+                                  0.,
+                                  tf.where(total_masking_norm <= mdct_abs,
+                                           mdct_norm,
+                                           (1./beta * mdct_norm + tf.sign(mdct_norm) * (1. - 1./beta) * total_masking_norm) ))
 
     return mdct_norm_filtered
 
