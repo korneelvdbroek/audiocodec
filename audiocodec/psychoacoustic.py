@@ -188,14 +188,13 @@ class PsychoacousticModel:
     mdct_intensity = tf.pow(mdct_amplitudes, 2)
     tonality = tf.minimum(1.0, 10 * tf.math.log(tf.divide(
       tf.exp(tf.reduce_mean(tf.math.log(tf.maximum(_EPSILON**2, mdct_intensity)), axis=2, keepdims=True)),
-      tf.reduce_mean(mdct_intensity, axis=2, keepdims=True))) / (-60.0 * math.log(10.0)))
+      tf.reduce_mean(mdct_intensity, axis=2, keepdims=True) + _EPSILON**2)) / (-60.0 * math.log(10.0)))
     # add bark_bands_n dimension: [#channels, #blocks, bark_bands_n]
     tonality = tf.tile(tonality, multiples=[1, 1, self.bark_bands_n])
 
     # compute masking offset: O(i) = tonality (14.5 + i) + (1 - tonality) 5.5
     # note: einsum('.i.,.i.->.i.') does an element-wise multiplication (and no sum) along a specified axes
-    offset = (1. - drown) * \
-             (tf.einsum('cbj,j->cbj', tonality, tf.linspace(0.0, max_bark, self.bark_bands_n)) + 9. * tonality + 5.5)
+    offset = (1. - drown) * (tf.einsum('cbj,j->cbj', tonality, tf.linspace(0.0, max_bark, self.bark_bands_n)) + 9. * tonality + 5.5)
 
     # add offset to spreading matrix
     masking_matrix = tf.einsum('ij,cbj->cbij', self.spreading_matrix, tf.pow(10.0, -self.alpha * offset / 10.0))

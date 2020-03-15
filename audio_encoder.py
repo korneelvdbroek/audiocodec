@@ -21,6 +21,7 @@ from audiocodec import psychoacoustic as pa
 from audiocodec.logspectrogram import Spectrogram
 
 # note: local install https://packaging.python.org/tutorials/installing-packages/#installing-from-a-local-src-tree
+# >>> pip install -e <local-path>
 
 # basic guiding principles:
 # 1. why do we work in the freq. space? analogy with ear (assuming the resonance theory is correct)
@@ -245,8 +246,8 @@ def test_mdct2():
 
   # setup
   # higher drown is better is filtering more with k!! (less weird sounds)
-  blocks_per_sec = 92
-  filter_bands_n = 92
+  blocks_per_sec = 86
+  filter_bands_n = 64
   drown = 0.0
   sample_rate = filter_bands_n * blocks_per_sec
   mdct = MDCT(filter_bands_n, dB_max=_dB_MAX, window_type='vorbis')
@@ -257,14 +258,14 @@ def test_mdct2():
   audio_filename = 'asot_02_cosmos'   # 'asot_02_cosmos_sr8100_118_128.wav'
   audio_filename_post_fix = '_sr{0:.0f}_118_128_{1:03.0f}'.format(sample_rate, 100 * drown)
   wave_data, sample_rate = codec_utils.load_wav(audio_filepath + audio_filename + ".wav", sample_rate)
-  # wave_data = clip_wav((1, 18), (1, 28), wave_data, sample_rate)
+  # wave_data = codec_utils.clip_wav((1, 18), (1, 28), wave_data, sample_rate)
   # wave_data, sample_rate = create_wav(sample_rate)
   channel = 0
   wave_data = wave_data[channel:(channel+1), 0:filter_bands_n * int(wave_data.shape[1] / filter_bands_n)]
   # wave_data, sample_rate = sine_wav(1.0, 3.95 * 787.5, sample_rate, 1.0)
 
   # play input
-  # play_wav(wave_data, sample_rate)
+  # codec_utils.play_wav(wave_data, sample_rate)
 
   # 1. to freq space
   spectrum_original = pa.ampl_to_norm(mdct.transform(wave_data))
@@ -273,14 +274,14 @@ def test_mdct2():
   spectrum_pa = psychoacoustic.lrelu_filter(spectrum_original, drown, beta=0.000001)
 
   # [3. clean version to tap-space] --> plot
-  pattern_length_original = blocks_per_sec
-  mdct2_clean = MDCT(pattern_length_original, dB_max=_dB_MAX, window_type='vorbis')
-  tap_space_clean = mdct2_clean.transform(
-    tf.transpose(
-      spectrum_pa[channel, 0:pattern_length_original * int(spectrum_pa.shape[1] / pattern_length_original), :],
-      perm=[1, 0]))
-
   if False:
+    pattern_length_original = blocks_per_sec
+    mdct2_clean = MDCT(pattern_length_original, dB_max=_dB_MAX, window_type='vorbis')
+    tap_space_clean = mdct2_clean.transform(
+      tf.transpose(
+        spectrum_pa[channel, 0:pattern_length_original * int(spectrum_pa.shape[1] / pattern_length_original), :],
+        perm=[1, 0]))
+
     # 4. butterworth filter in time-domain
     wave_pa = mdct.inverse_transform(pa.norm_to_ampl(spectrum_pa))
     nyq = 0.5 * sample_rate
@@ -303,81 +304,87 @@ def test_mdct2():
   else:
     spectrum_pa_tfilter = spectrum_pa
 
-  # 5. filter on pattern space
-  # [freq_bins, #blocks]
-  spectrum_pa_tfilter_transpose = tf.transpose(
-    spectrum_pa_tfilter[channel, 0:pattern_length_original * int(spectrum_pa.shape[1] / pattern_length_original), :],
-    perm=[1, 0])
   if False:
-    # butterworth (in time domain)
-    fs = blocks_per_sec  # 90
-    nyq = 0.5 * fs
-    print("Pattern Nyquist frequency = ", nyq)
-    lowcut = 10.0    # 90/2 Hz max <<-- where we will cut
-    highcut = 44.99
-    low = lowcut / nyq
-    high = highcut / nyq
-    order = 6
-    b, a = signal.butter(order, low, btype='lowpass')
-    # plot
-    data = spectrum_pa_tfilter_transpose[10, :]
-    y = signal.lfilter(b, a, data)
-    plt.plot(data)
-    plt.plot(y)
-    plt.show()
-    #
-    spectrum_pa_tfilter_pfilter_transpose = tf.map_fn(lambda x: signal.lfilter(b, a, x), spectrum_pa_tfilter_transpose)
-    spectrum_pa_tfilter_pfilter_transpose = (spectrum_pa_tfilter_pfilter_transpose[:, 1::2])
-  elif True:
-    # pure sampling filter
-    spectrum_pa_tfilter_pfilter_transpose = spectrum_pa_tfilter_transpose[:, 1::2]
-  else:
-    spectrum_pa_tfilter_pfilter_transpose = spectrum_pa_tfilter_transpose
+    # 5. filter on pattern space
+    # spectrum_pa_tfilter_transpose = [freq_bins, #blocks]
+    spectrum_pa_tfilter_transpose = tf.transpose(
+      spectrum_pa_tfilter[channel, 0:pattern_length_original * int(spectrum_pa.shape[1] / pattern_length_original), :],
+      perm=[1, 0])
+    if False:
+      # butterworth (in time domain)
+      fs = blocks_per_sec  # 90
+      nyq = 0.5 * fs
+      print("Pattern Nyquist frequency = ", nyq)
+      lowcut = 10.0    # 90/2 Hz max <<-- where we will cut
+      highcut = 44.99
+      low = lowcut / nyq
+      high = highcut / nyq
+      order = 6
+      b, a = signal.butter(order, low, btype='lowpass')
+      # plot
+      data = spectrum_pa_tfilter_transpose[10, :]
+      y = signal.lfilter(b, a, data)
+      plt.plot(data)
+      plt.plot(y)
+      plt.show()
+      #
+      spectrum_pa_tfilter_pfilter_transpose = tf.map_fn(lambda x: signal.lfilter(b, a, x), spectrum_pa_tfilter_transpose)
+      spectrum_pa_tfilter_pfilter_transpose = (spectrum_pa_tfilter_pfilter_transpose[:, 1::2])
+    elif True:
+      # pure sampling filter
+      spectrum_pa_tfilter_pfilter_transpose = spectrum_pa_tfilter_transpose[:, 1::16]
+    else:
+      spectrum_pa_tfilter_pfilter_transpose = spectrum_pa_tfilter_transpose
 
-  # 6. to tap space
-  # spectrum2 = [#channels = freq_buckets, #taps, patterns_n]
-  pattern_length_filtered = int(pattern_length_original/2)
-  mdct2 = MDCT(pattern_length_filtered, dB_max=_dB_MAX, window_type='vorbis')
-  tap_space_filtered = mdct2.transform(spectrum_pa_tfilter_pfilter_transpose)
+    # 6. to tap space
+    # spectrum2 = [#channels = freq_buckets, #taps, patterns_n]
+    # pattern_length_filtered = int(pattern_length_original)
+    # mdct2 = MDCT(pattern_length_filtered, dB_max=_dB_MAX, window_type='vorbis')
+    # tap_space_filtered = mdct2.transform(spectrum_pa_tfilter_pfilter_transpose)
 
-  # 7. filter tap space
-  if False:
-    # (keep only dominant patterns)
-    # seconds(4) x pattern_width(4) x ampl_freq_components(4)
-    k = 10000
-    cutoffs, _ = tf.math.top_k(tf.reshape(tf.abs(tap_space_filtered), [-1]), k)
-    spectrum2_mods = tf.sign(tap_space_filtered) * tf.where(tf.abs(tap_space_filtered) > cutoffs[k-1], tf.abs(tap_space_filtered), tf.zeros(tf.shape(tap_space_filtered)))
-  elif False:
-    # [#freq_buckets, #blocks, #filters2_n]
-    intensity_raw = tf.pow(tap_space_filtered, 2)
-    intensity = tf.transpose(intensity_raw, perm=[0, 2, 1])
-    intensity = tf.reshape(intensity, [-1, tf.shape(tap_space_filtered)[2]])
-    intensity = tf.expand_dims(intensity, axis=-1)
-    kernel = 1./10. * tf.ones([10, 1, 1])
-    tf.print(tf.shape(intensity))
-    tf.print(tf.shape(kernel))
-    intensity_blurred = tf.nn.conv1d(intensity, kernel, stride=1, padding='SAME')
-    intensity_blurred = intensity_blurred[:, :, 0]
-    intensity_blurred = tf.reshape(intensity_blurred, [tf.shape(tap_space_filtered)[0], tf.shape(tap_space_filtered)[2], tf.shape(tap_space_filtered)[1]])
-    intensity_blurred = tf.transpose(intensity_blurred, perm=[0, 2, 1])
-    tf.print(intensity_raw)
-    tf.print(intensity_blurred)
-    tf.print(tf.shape(intensity_blurred))
-    spectrum2_mods = tf.sign(tap_space_filtered) * tf.pow(tf.maximum(intensity_blurred, pa._EPSILON), 1./2.)
-  else:
-    spectrum2_mods = tap_space_filtered
+    # 7. filter tap space
+    if False:
+      # (keep only dominant patterns)
+      # seconds(4) x pattern_width(4) x ampl_freq_components(4)
+      k = 10000
+      cutoffs, _ = tf.math.top_k(tf.reshape(tf.abs(tap_space_filtered), [-1]), k)
+      spectrum2_mods = tf.sign(tap_space_filtered) * tf.where(tf.abs(tap_space_filtered) > cutoffs[k-1], tf.abs(tap_space_filtered), tf.zeros(tf.shape(tap_space_filtered)))
+    elif False:
+      # [#freq_buckets, #blocks, #filters2_n]
+      intensity_raw = tf.pow(tap_space_filtered, 2)
+      intensity = tf.transpose(intensity_raw, perm=[0, 2, 1])
+      intensity = tf.reshape(intensity, [-1, tf.shape(tap_space_filtered)[2]])
+      intensity = tf.expand_dims(intensity, axis=-1)
+      kernel = 1./10. * tf.ones([10, 1, 1])
+      tf.print(tf.shape(intensity))
+      tf.print(tf.shape(kernel))
+      intensity_blurred = tf.nn.conv1d(intensity, kernel, stride=1, padding='SAME')
+      intensity_blurred = intensity_blurred[:, :, 0]
+      intensity_blurred = tf.reshape(intensity_blurred, [tf.shape(tap_space_filtered)[0], tf.shape(tap_space_filtered)[2], tf.shape(tap_space_filtered)[1]])
+      intensity_blurred = tf.transpose(intensity_blurred, perm=[0, 2, 1])
+      tf.print(intensity_raw)
+      tf.print(intensity_blurred)
+      tf.print(tf.shape(intensity_blurred))
+      spectrum2_mods = tf.sign(tap_space_filtered) * tf.pow(tf.maximum(intensity_blurred, pa._EPSILON), 1./2.)
+    else:
+      spectrum2_mods = tap_space_filtered
 
-  # 8. go back to time domain
-  spectrum1_recon = mdct2.inverse_transform(spectrum2_mods)
+    # 8. go back to time domain
+    spectrum1_recon = mdct2.inverse_transform(spectrum2_mods)
+    spectrum1_recon = spectrum1_recon[:, pattern_length_filtered:-pattern_length_filtered]
+    spectrum1_recon = tf.transpose(spectrum1_recon, perm=[1, 0])
+    spectrum1_recon = tf.expand_dims(spectrum1_recon, axis=0)
+
+  spectrum1_recon = spectrum_pa[:, 0::4, :]
+  # spectrum1_recon = tf.reshape(
+  #   tf.stack([spectrum1_recon, tf.zeros(tf.shape(spectrum1_recon))], axis=2),
+  #   shape=[tf.shape(spectrum1_recon)[0], 2*tf.shape(spectrum1_recon)[1], tf.shape(spectrum1_recon)[2]])
   # [#channels = freq_buckets, #blocks+2]
-  spectrum1_recon = spectrum1_recon[:, pattern_length_filtered:-pattern_length_filtered]
-  spectrum1_recon = tf.transpose(spectrum1_recon, perm=[1, 0])
-  spectrum1_recon = tf.expand_dims(spectrum1_recon, axis=0)
   wave_reproduced = mdct.inverse_transform(pa.norm_to_ampl(spectrum1_recon))
 
   # play and save reconstructed wav
-  # play_wav(wave_reproduced, sample_rate)
-  save_wav(audio_filepath + audio_filename + audio_filename_post_fix + '_reconstructed.wav', wave_reproduced, sample_rate)
+  # codec_utils.play_wav(wave_reproduced, sample_rate)
+  codec_utils.save_wav(audio_filepath + audio_filename + audio_filename_post_fix + '_reconstructed.wav', wave_reproduced, int(sample_rate/2))
 
   # ################
   # plot spectrogram
@@ -606,10 +613,11 @@ def test_mdct_normalization():
 
 def main():
   # test_mdct()
-  test_mdct_normalization()
+  # test_mdct_normalization()
   # test_mdct_precision()
   # test_psychoacoustic()
   # test_psychoacoustic_gradient()
+  test_mdct2()
   # test_mdct2_gradient()
   # play_from_im()
   # test_dB_level()
