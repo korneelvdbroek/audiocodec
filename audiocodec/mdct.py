@@ -10,14 +10,13 @@ import math
 
 
 class MDCT:
-  def __init__(self, filters_n=1024, dB_max=100.0, window_type='vorbis'):
+  def __init__(self, filters_n=1024, window_type='vorbis'):
     """Computes required initialization matrices (stateless, no OOP)
     Note: H and H_inv are very sparse (2xfilter_n non-zero elements, arranged in diamond shape),
     yet TF2.0 does not support tf.nn.convolution for SparseTensor
     todo: work out polymatmul(x_pp, H) and polymatmul(y, H_inv) in more efficient way
 
     :param filters_n:   number of filter bands of the filter bank (needs to be even)
-    :param dB_max:      scale factor which determines maximum possible amplitude (in dB) of an mdct amplitude
     :param window_type: None, 'sine' or 'vorbis' (default) to select window type
     :return:            tuple with pre-computed required for encoder and decoder
     """
@@ -27,7 +26,6 @@ class MDCT:
     self.window_type = window_type
     self.H = self._polyphase_matrix()
     self.H_inv = self._inv_polyphase_matrix()
-    self.dB_factor = 10.**(dB_max / 20.)
 
   def _polyphase_matrix(self):
     """Decomposed part of poly-phase matrix of an MDCT filter bank, with a sine modulated window:
@@ -108,14 +106,14 @@ class MDCT:
     as can be seen from the dct4 formula, with x_{max} \approx 1.
     The poly-phase matrix H adds another factor of \\sqrt{2}
     These dct4() amplitudes are then rescaled by
-       10^{_dB_MAX / 20.} / \\sqrt{2 filter_n}
+       1. / (\\sqrt{2} \\sqrt{2 filter_n})
     so the maximum output amplitudes are of the order of
-       10^{_dB_MAX / 20.}
+       1.
 
     :param x:            signal data assumed in -1..1 range [channels, #samples]
     :return:             filters_n coefficients of MDCT transform for each block [#channels, #blocks+1, filters_n]
                          where #samples = #blocks x filters_n
-                         amplitudes are rescaled such that largest possible amplitude is 10^{_dB_MAX / 20.}
+                         amplitudes are normalized to be in the ]-1, 1[ range
     """
     # split signal into blocks
     x_pp = self._x2polyphase(x)                            # [#channels, #blocks, filters_n]
@@ -124,18 +122,18 @@ class MDCT:
     mdct_amplitudes = self._dct4(self._polymatmul(x_pp, self.H))   # [#channels, #blocks+1, filters_n]
 
     # up-scale
-    return (self.dB_factor / tf.sqrt(4. * tf.cast(self.filters_n, dtype=tf.float32))) * mdct_amplitudes
+    return (1. / tf.sqrt(4. * tf.cast(self.filters_n, dtype=tf.float32))) * mdct_amplitudes
 
   @tf.function
   def inverse_transform(self, mdct_amplitudes):
     """MDCT synthesis filter bank.
 
     :param mdct_amplitudes: mdct amplitudes with shape       [#channels, #blocks, filters_n]
-                            amplitudes should be scaled such that maximum possible amplitude has size 10^{_dB_MAX / 20.}
+                            amplitudes should be in -1..1 range
     :return:                restored signal in range -1..1   [#channels, #samples]
                             where #samples = (#blocks + 1) x filters_n
     """
-    mdct_rescaled = (tf.sqrt(4. * tf.cast(self.filters_n, dtype=tf.float32)) / self.dB_factor) * mdct_amplitudes
+    mdct_rescaled = tf.sqrt(4. * tf.cast(self.filters_n, dtype=tf.float32)) * mdct_amplitudes
 
     # put y through inverse filter bank
     x_pp = self._polymatmul(self._dct4(mdct_rescaled), self.H_inv)
@@ -255,7 +253,6 @@ class MDCT:
                         axis=-1 are filter_n samples from the signal, on which the DCT4 is performed
     :return:            3-D array where axis=1 is DCT4-transformed, orthonormal with shape [#channel, #blocks, filters_n]
                         axis=2 contains coefficients of the cosine harmonics which compose the filters_n block signal
-                        amplitudes are rescaled, such that largest possible amplitude has dB_MAX decibels
     """
     # up-sample by inserting zeros for all even entries: this allows us to express DCT-IV as a DCT-III
     upsampled = tf.reshape(

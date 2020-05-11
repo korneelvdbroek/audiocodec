@@ -12,6 +12,8 @@ import math
 
 _dB_MIN = 0.
 _dB_MAX = 100.
+_AMPL_MIN = 10.**(_dB_MIN / 20.)
+_AMPL_MAX = 10.**(_dB_MAX / 20.)
 _EPSILON = 1e-6
 
 
@@ -112,14 +114,14 @@ class PsychoacousticModel:
     total_masking_norm = ampl_to_norm(total_threshold)
 
     # LeakyReLU-based filter: suppress in-audible frequencies (in norm space)
-    noise = tf.random.uniform(tf.shape(mdct_norm), minval=0., maxval=1.)
-    mdct_abs = tf.abs(mdct_norm)
-    mdct_norm_filtered = tf.where(mdct_abs <= 1./(1.+beta) * total_masking_norm,
-                                  beta * mdct_norm * noise,
-                                  tf.where(total_masking_norm <= mdct_abs,
-                                           mdct_norm,
-                                           (1./beta * mdct_norm + tf.sign(mdct_norm) * (1. - 1./beta) * total_masking_norm)
-                                           * (1. - noise * (total_masking_norm - mdct_abs) / total_masking_norm * ((1. + beta) / beta)) ))
+    # noise = tf.random.uniform(tf.shape(mdct_norm), minval=0., maxval=1.)
+    # mdct_abs = tf.abs(mdct_norm)
+    # mdct_norm_filtered = tf.where(mdct_abs <= 1./(1.+beta) * total_masking_norm,
+    #                               beta * mdct_norm * noise,
+    #                               tf.where(total_masking_norm <= mdct_abs,
+    #                                        mdct_norm,
+    #                                        (1./beta * mdct_norm + tf.sign(mdct_norm) * (1. - 1./beta) * total_masking_norm)
+    #                                        * (1. - noise * (total_masking_norm - mdct_abs) / total_masking_norm * ((1. + beta) / beta)) ))
 
     # This leads to horrible gradients...
     # mdct_abs = tf.abs(mdct_norm)
@@ -133,24 +135,9 @@ class PsychoacousticModel:
                                   0.,
                                   tf.where(total_masking_norm <= mdct_abs,
                                            mdct_norm,
-                                           (1./beta * mdct_norm + tf.sign(mdct_norm) * (1. - 1./beta) * total_masking_norm) ))
+                                           (1./beta * mdct_norm + tf.sign(mdct_norm) * (1. - 1./beta) * total_masking_norm)))
 
     return mdct_norm_filtered
-
-  @tf.function
-  def noise_filter(self, mdct_norm):
-    """
-
-    :param mdct_norm:
-    :return:
-    """
-    # noise-based overlay: add noise to in-audible frequencies,
-    # so learning does not learn anything about these (in norm space)
-    # todo: continue here (decide what sigma to use for noise)
-    # mdct_norm_noised = tf.where(total_masking_norm <= mdct_abs_fadeout,
-    #                           mdct_norm,
-    #                           noise)
-    pass
 
   def _global_masking_threshold_in_bark(self, mdct_amplitudes, drown=0.):
     """Determines which amplitudes we cannot hear, either since they are too soft
@@ -270,7 +257,7 @@ class PsychoacousticModel:
               filter_bank_n [       ...    ]
                             [ 0  0  ...  1 ]
 
-    Inverse transformation, from Bark bins to MDCT filter bands, consists of transposed
+    Inverse transformation, from Bark bins amplitude(!) to MDCT filter bands amplitude(!), consists of transposed
     with normalization factor such that power (square of amplitude) in each Bark band
     gets split equally between the filter bands making up that Bark band:
 
