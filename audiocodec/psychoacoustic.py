@@ -10,10 +10,7 @@ Note: non-private functions are decorated with tf.function.
 import tensorflow as tf
 import math
 
-_dB_MIN = 0.
-_dB_MAX = 100.
-_AMPL_MIN = 10.**(_dB_MIN / 20.)
-_AMPL_MAX = 10.**(_dB_MAX / 20.)
+_dB_MAX = 100.   # amplitude range is -1..1; _dB_MAX specifies what dB level ampl=1 corresponds with
 _EPSILON = 1e-6
 
 
@@ -99,7 +96,7 @@ class PsychoacousticModel:
   def lrelu_filter(self, mdct_norm, drown=0.0, beta=0.2):
     """Leaky ReLU suppression of in-audible frequencies
 
-    :param mdct_norm:           mdct amplitudes in rescaled dB         [#channels, #blocks, filter_bands_n]
+    :param mdct_norm:           mdct amplitudes in -1..1 range         [#channels, #blocks, filter_bands_n]
     :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
     :param beta:                percent of values below the threshold line which are let through but attenuated
                                 lower values will lead to larger gradients...
@@ -130,12 +127,20 @@ class PsychoacousticModel:
     #                               0.0)
 
     # LeakyReLU-based filter: suppress in-audible frequencies (in norm space)
+    # version where we get total suppressions
+    # mdct_abs = tf.abs(mdct_norm)
+    # mdct_norm_filtered = tf.where(mdct_abs <= (1.-beta) * total_masking_norm,
+    #                               0.,
+    #                               tf.where(total_masking_norm <= mdct_abs,
+    #                                        mdct_norm,
+    #                                        (1./beta * mdct_norm + tf.sign(mdct_norm) * (1. - 1./beta) * total_masking_norm)))
+    # version without total suppression
     mdct_abs = tf.abs(mdct_norm)
-    mdct_norm_filtered = tf.where(mdct_abs <= (1.-beta) * total_masking_norm,
-                                  0.,
+    mdct_norm_filtered = tf.where(mdct_abs <= total_masking_norm / (1. + beta),
+                                  beta * mdct_norm,
                                   tf.where(total_masking_norm <= mdct_abs,
                                            mdct_norm,
-                                           (1./beta * mdct_norm + tf.sign(mdct_norm) * (1. - 1./beta) * total_masking_norm)))
+                                           1./beta * mdct_norm + (1. - 1./beta) * tf.sign(mdct_norm) * total_masking_norm))
 
     return mdct_norm_filtered
 
@@ -329,57 +334,26 @@ class PsychoacousticModel:
 
 
 def ampl_to_norm(mdct_amplitudes):
-  """Point-wise converts mdct amplitudes to normalized dB scale
-      dB = 20 log_10{ampl}
+  """Point-wise converts mdct amplitudes normalized for audio range -10^{dB_max/20}..10^{dB_max/20}
+  to normalized -1..1 range
 
   :param mdct_amplitudes:  -inf..inf          [channels_n, #blocks, filter_bands_n]
   :return:                 -1..1              [channels_n, #blocks, filter_bands_n]
   """
   # this formula clips the very small amplitudes (so log() does not become negative)
-  mdct_dB = tf.sign(mdct_amplitudes) * 20. * \
-            tf.maximum(
-              tf.math.log(tf.maximum(_EPSILON, tf.abs(mdct_amplitudes))),
-              0.0) / tf.math.log(10.)
-
-  mdct_norm = dB_to_norm(mdct_dB)
+  mdct_norm = mdct_amplitudes / 10.**(_dB_MAX/20.)
 
   return mdct_norm
 
 
 def norm_to_ampl(mdct_norm):
-  """Point-wise converts mdct amplitudes in normalized dB scale to actual amplitude values
-      ampl = 10^{dB/20}
+  """Point-wise converts mdct amplitudes normalized in -1..1 range to
+  amplitude values in -10^{dB_max/20}..10^{dB_max/20} range,
+  such that amplitudes have right scale for psychoacoustic filter
 
   :param mdct_norm:   -1..1              [channels_n, #blocks, filter_bands_n]
   :return:            -inf..inf          [channels_n, #blocks, filter_bands_n]
   """
-  mdct_dB = norm_to_dB(mdct_norm)
-  mdct_amplitudes = tf.sign(mdct_dB) * tf.pow(10., tf.abs(mdct_dB) / 20.)
+  mdct_amplitudes = 10.**(_dB_MAX/20.) * mdct_norm
 
   return mdct_amplitudes
-
-
-def dB_to_norm(mdct_dB):
-  """Point-wise linearly normalize mdct amplitude expressed in dB (range -inf..inf) to -1..1 range
-
-  :param mdct_dB: -inf..inf [dB]     [channels_n, #blocks, filter_bands_n]
-  :return:        -1..1              [channels_n, #blocks, filter_bands_n]
-  """
-  mdct_norm = (tf.abs(mdct_dB) - _dB_MIN) / (_dB_MAX - _dB_MIN)
-
-  # tf.debugging.assert_less_equal(tf.reduce_max(mdct_norm), 1.,
-  #                                message="normalization is not in -1..1 range (clipping...)")
-
-  # this formula clips the very large amplitudes
-  return tf.clip_by_value(tf.sign(mdct_dB) * mdct_norm, -1., 1.)
-
-
-def norm_to_dB(mdct_norm):
-  """Point-wise convert normalized mdct amplitudes in -1..1 range to amplitude in dB (range -inf..inf)
-
-  :param mdct_norm: -1..1            [channels_n, #blocks, filter_bands_n]
-  :return:          -inf..inf [dB]   [channels_n, #blocks, filter_bands_n]
-  """
-  mdct_dB = (_dB_MAX - _dB_MIN) * tf.abs(mdct_norm) + _dB_MIN
-
-  return tf.sign(mdct_norm) * mdct_dB

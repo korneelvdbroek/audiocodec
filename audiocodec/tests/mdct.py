@@ -5,7 +5,7 @@ import tensorflow as tf
 
 from audiocodec.mdct import MDCT
 
-EPS = 1e-6
+EPS = 1e-5
 
 
 def sine_wav(amplitude, frequency, sample_rate=44100, duration_sec=2.0):

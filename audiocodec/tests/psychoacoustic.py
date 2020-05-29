@@ -5,7 +5,7 @@ import tensorflow as tf
 
 from audiocodec import psychoacoustic
 
-EPS = 1e-6
+EPS = 1e-5
 
 
 class TestPsychoacoustic(unittest.TestCase):
