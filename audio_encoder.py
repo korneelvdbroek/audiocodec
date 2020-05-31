@@ -208,7 +208,7 @@ def test_psychoacoustic_gradient():
   mdct_norm = mdct_norm[0:1, :, :]
 
   # filter (strong beta to make visual difference)
-  spectrum_modified = psychoacoustic.lrelu_filter(mdct_norm, drown, beta=0.01)
+  spectrum_modified = psychoacoustic.lrelu_filter(mdct_norm, drown, max_gradient=100)
 
   # plot
   fig, (ax1, ax2) = plt.subplots(nrows=2)
@@ -224,7 +224,7 @@ def test_psychoacoustic_gradient():
     d.watch(mdct_norm)
 
     # check gradients!!!!!
-    total_masking_norm = psychoacoustic.lrelu_filter(mdct_norm, drown, beta=0.2)
+    total_masking_norm = psychoacoustic.lrelu_filter(mdct_norm, drown, max_gradient=5)
 
     element = total_masking_norm[channel, block, freq_bin]
 
@@ -271,7 +271,7 @@ def test_mdct2():
   spectrum_original = pa.ampl_to_norm(mdct.transform(wave_data))
 
   # 2. psychoacoustic filter [channel = 0, #blocks, freq_bucket]
-  spectrum_pa = psychoacoustic.lrelu_filter(spectrum_original, drown, beta=0.000001)
+  spectrum_pa = psychoacoustic.lrelu_filter(spectrum_original, drown, max_gradient=1000)
 
   # [3. clean version to tap-space] --> plot
   if False:
@@ -300,7 +300,7 @@ def test_mdct2():
     #
     spectrum_pa_tfilter = pa.ampl_to_norm(mdct.transform(wave_pa_filtered))
     # extra psychoacoustic filter
-    spectrum_pa_tfilter = psychoacoustic.lrelu_filter(spectrum_pa_tfilter, drown, beta=0.000001)
+    spectrum_pa_tfilter = psychoacoustic.lrelu_filter(spectrum_pa_tfilter, drown, max_gradient=1000)
   else:
     spectrum_pa_tfilter = spectrum_pa
 
@@ -452,7 +452,7 @@ def test_octave():
   spectrum = pa.ampl_to_norm(mdct_ampl)
 
   # filter
-  spectrum_modified = psychoacoustic.lrelu_filter(spectrum, drown, beta=0.001)
+  spectrum_modified = psychoacoustic.lrelu_filter(spectrum, drown, max_gradient=1000)
   log_spectrum = logspectrumconvertor.freq_to_note(spectrum_modified)
 
   if False:
@@ -496,7 +496,7 @@ def test_psychoacoustic():
   spectrum = pa.ampl_to_norm(mdct_ampl)
 
   # filter
-  spectrum_modified = psychoacoustic.lrelu_filter(spectrum, drown, beta=0.2)
+  spectrum_modified = psychoacoustic.lrelu_filter(spectrum, drown, max_gradient=5)
   codec_utils.save_spectrogram(spectrum_modified, audio_filepath + audio_filename + audio_filename_post_fix + ".png")
 
   # back to audio signal

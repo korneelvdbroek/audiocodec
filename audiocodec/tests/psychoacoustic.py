@@ -17,7 +17,7 @@ class TestPsychoacoustic(unittest.TestCase):
 
       self.assertLess(psychoacoustic.ampl_to_norm(mdct_ampl) - mdct_norm, EPS, "Should be zero")
 
-    self.assertLess(psychoacoustic.ampl_to_norm(psychoacoustic.norm_to_ampl(1.2)) - 1.0, EPS, "Should be zero")
+    self.assertLess(psychoacoustic.ampl_to_norm(psychoacoustic.norm_to_ampl(1.2)) - 1.2, EPS, "Should be zero")
 
 
 if __name__ == '__main__':

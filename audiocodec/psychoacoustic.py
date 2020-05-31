@@ -93,14 +93,13 @@ class PsychoacousticModel:
     return mdct_modified_norm
 
   @tf.function
-  def lrelu_filter(self, mdct_norm, drown=0.0, beta=0.2):
+  def lrelu_filter(self, mdct_norm, drown=0.0, max_gradient: int = 10):
     """Leaky ReLU suppression of in-audible frequencies
 
-    :param mdct_norm:           mdct amplitudes in -1..1 range         [#channels, #blocks, filter_bands_n]
-    :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
-    :param beta:                percent of values below the threshold line which are let through but attenuated
-                                lower values will lead to larger gradients...
-    :return:                    filtered normalized mdct amplitudes    [#channels, #blocks, filter_bands_n]
+    :param mdct_norm:          mdct amplitudes in -1..1 range         [#channels, #blocks, filter_bands_n]
+    :param drown:              factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
+    :param max_gradient:       maximum gradient of this lrelu (1/max_gradient corresponds with the normal lReLU factor)
+    :return:                   filtered normalized mdct amplitudes    [#channels, #blocks, filter_bands_n]
     """
     # get masking threshold in norm space
     tf.debugging.assert_less_equal(tf.reduce_max(tf.abs(mdct_norm)), 1.,
@@ -127,20 +126,31 @@ class PsychoacousticModel:
     #                               0.0)
 
     # LeakyReLU-based filter: suppress in-audible frequencies (in norm space)
-    # version where we get total suppressions
+    # 1. version where we get total suppression
     # mdct_abs = tf.abs(mdct_norm)
     # mdct_norm_filtered = tf.where(mdct_abs <= (1.-beta) * total_masking_norm,
     #                               0.,
     #                               tf.where(total_masking_norm <= mdct_abs,
     #                                        mdct_norm,
     #                                        (1./beta * mdct_norm + tf.sign(mdct_norm) * (1. - 1./beta) * total_masking_norm)))
-    # version without total suppression
-    mdct_abs = tf.abs(mdct_norm)
-    mdct_norm_filtered = tf.where(mdct_abs <= total_masking_norm / (1. + beta),
-                                  beta * mdct_norm,
-                                  tf.where(total_masking_norm <= mdct_abs,
-                                           mdct_norm,
-                                           1./beta * mdct_norm + (1. - 1./beta) * tf.sign(mdct_norm) * total_masking_norm))
+
+    # 2. linear version without total suppression
+    # mdct_abs = tf.abs(mdct_norm)
+    # mdct_norm_filtered = tf.where(mdct_abs <= total_masking_norm / (1. + beta),
+    #                               beta * mdct_norm,
+    #                               tf.where(total_masking_norm <= mdct_abs,
+    #                                        mdct_norm,
+    #                                        1./beta * mdct_norm + (1. - 1./beta) * tf.sign(mdct_norm) * total_masking_norm))
+
+    # 3. supra-linear version with total suppression
+    # https://stackoverflow.com/questions/33712178/tensorflow-nan-bug/42497444#42497444
+    #
+    def f_attentuation(x):
+      return (1. / (2. - x)**max_gradient - 1./2**max_gradient) / (1. - 1./2**max_gradient)
+
+    x_abs = tf.abs(mdct_norm) / total_masking_norm
+    x_abs_safe = tf.where(x_abs < 1., x_abs, 1.)
+    mdct_norm_filtered = tf.where(x_abs < 1., f_attentuation(x_abs_safe) * mdct_norm, mdct_norm)
 
     return mdct_norm_filtered
 
