@@ -66,15 +66,15 @@ class PsychoacousticModel:
     return global_mask_threshold
 
   @tf.function
-  def zero_filter(self, mdct_norm, tonality_per_block, drown=0.0):
+  def zero_filter(self, mdct_norm, drown=0.0):
     """Zero out out frequencies which are inaudible
 
     :param mdct_norm:           vector of normalized mdct amplitudes for each filter [#channels, #blocks, filter_bands_n]
-    :param tonality_per_block:  tonality vector associated with the mdct_amplitudes [#channels, #blocks]
     :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
     :return:                    modified amplitudes [#channels, #blocks, filter_bands_n]
     """
     mdct_amplitudes = norm_to_ampl(mdct_norm)
+    tonality_per_block = self.tonality(mdct_amplitudes)
     total_threshold = self.global_masking_threshold(mdct_amplitudes, tonality_per_block, drown)
     threshold_norm = ampl_to_norm(total_threshold)
 
@@ -95,11 +95,10 @@ class PsychoacousticModel:
     return mdct_modified_norm
 
   @tf.function
-  def lrelu_filter(self, mdct_norm, tonality_per_block, drown=0.0, max_gradient: int = 10):
+  def lrelu_filter(self, mdct_norm, drown=0.0, max_gradient: int = 10):
     """Leaky ReLU suppression of in-audible frequencies
 
     :param mdct_norm:           mdct amplitudes in -1..1 range         [#channels, #blocks, filter_bands_n]
-    :param tonality_per_block:  tonality vector associated with the mdct_amplitudes [#channels, #blocks]
     :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
     :param max_gradient:        maximum gradient of this lrelu (1/max_gradient corresponds with the normal lReLU factor)
     :return:                    filtered normalized mdct amplitudes    [#channels, #blocks, filter_bands_n]
@@ -109,6 +108,7 @@ class PsychoacousticModel:
                                    "psychoacoustic.lrelu_filter inputs should be in the -1..1 range")
 
     mdct_amplitudes = norm_to_ampl(mdct_norm)
+    tonality_per_block = self.tonality(mdct_amplitudes)
     total_threshold = self.global_masking_threshold(mdct_amplitudes, tonality_per_block, drown)
     total_masking_norm = ampl_to_norm(total_threshold)
 
