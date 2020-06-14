@@ -51,29 +51,31 @@ class PsychoacousticModel:
     return mdct_scale_factors
 
   @tf.function
-  def global_masking_threshold(self, mdct_amplitudes, drown=0.0):
+  def global_masking_threshold(self, mdct_amplitudes, tonality_per_block, drown=0.0):
     """Determines which amplitudes we cannot hear, either since they are too soft
     to hear or because other louder amplitudes are masking it.
     Method uses non-linear superposition determined by factor alpha
 
-    :param mdct_amplitudes:   vector of mdct amplitudes (spectrum) for each filter [#channels, #blocks, filter_bands_n]
-    :param drown:             factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
-    :return:                  masking threshold [#channels, #blocks, filter_bands_n]
+    :param mdct_amplitudes:     vector of mdct amplitudes (spectrum) for each filter [#channels, #blocks, filter_bands_n]
+    :param tonality_per_block:  tonality vector associated with the mdct_amplitudes [#channels, #blocks]
+    :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
+    :return:                    masking threshold [#channels, #blocks, filter_bands_n]
     """
     global_mask_threshold = self._mappingfrombark(
-      self._global_masking_threshold_in_bark(mdct_amplitudes, drown))
+      self._global_masking_threshold_in_bark(mdct_amplitudes, tonality_per_block, drown))
     return global_mask_threshold
 
   @tf.function
-  def zero_filter(self, mdct_norm, drown=0.0):
+  def zero_filter(self, mdct_norm, tonality_per_block, drown=0.0):
     """Zero out out frequencies which are inaudible
 
-    :param mdct_norm:      vector of normalized mdct amplitudes for each filter [#channels, #blocks, filter_bands_n]
-    :param drown:          factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
-    :return:               modified amplitudes [#channels, #blocks, filter_bands_n]
+    :param mdct_norm:           vector of normalized mdct amplitudes for each filter [#channels, #blocks, filter_bands_n]
+    :param tonality_per_block:  tonality vector associated with the mdct_amplitudes [#channels, #blocks]
+    :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
+    :return:                    modified amplitudes [#channels, #blocks, filter_bands_n]
     """
     mdct_amplitudes = norm_to_ampl(mdct_norm)
-    total_threshold = self.global_masking_threshold(mdct_amplitudes, drown)
+    total_threshold = self.global_masking_threshold(mdct_amplitudes, tonality_per_block, drown)
     threshold_norm = ampl_to_norm(total_threshold)
 
     # Update spectrum
@@ -93,20 +95,21 @@ class PsychoacousticModel:
     return mdct_modified_norm
 
   @tf.function
-  def lrelu_filter(self, mdct_norm, drown=0.0, max_gradient: int = 10):
+  def lrelu_filter(self, mdct_norm, tonality_per_block, drown=0.0, max_gradient: int = 10):
     """Leaky ReLU suppression of in-audible frequencies
 
-    :param mdct_norm:          mdct amplitudes in -1..1 range         [#channels, #blocks, filter_bands_n]
-    :param drown:              factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
-    :param max_gradient:       maximum gradient of this lrelu (1/max_gradient corresponds with the normal lReLU factor)
-    :return:                   filtered normalized mdct amplitudes    [#channels, #blocks, filter_bands_n]
+    :param mdct_norm:           mdct amplitudes in -1..1 range         [#channels, #blocks, filter_bands_n]
+    :param tonality_per_block:  tonality vector associated with the mdct_amplitudes [#channels, #blocks]
+    :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
+    :param max_gradient:        maximum gradient of this lrelu (1/max_gradient corresponds with the normal lReLU factor)
+    :return:                    filtered normalized mdct amplitudes    [#channels, #blocks, filter_bands_n]
     """
     # get masking threshold in norm space
     tf.debugging.assert_less_equal(tf.reduce_max(tf.abs(mdct_norm)), 1.,
                                    "psychoacoustic.lrelu_filter inputs should be in the -1..1 range")
 
     mdct_amplitudes = norm_to_ampl(mdct_norm)
-    total_threshold = self.global_masking_threshold(mdct_amplitudes, drown)
+    total_threshold = self.global_masking_threshold(mdct_amplitudes, tonality_per_block, drown)
     total_masking_norm = ampl_to_norm(total_threshold)
 
     # LeakyReLU-based filter: suppress in-audible frequencies (in norm space)
@@ -154,17 +157,32 @@ class PsychoacousticModel:
 
     return mdct_norm_filtered
 
-  def _global_masking_threshold_in_bark(self, mdct_amplitudes, drown=0.):
+  def tonality(self, mdct_amplitudes):
+    """
+    Compute tonality (0:white noise ... 1:tonal) from the spectral flatness measure
+    (SFM = 0dB for white noise, SFM << 0dB for pure tone)
+    tonality = 10./-60. * \log_10  (e^{1/N \sum_{filter_band_i} \ln(a_i^2)}) /
+                                   (1/N \sum_{filter_band_i} a_i^2)
+    :param mdct_amplitudes:   mdct amplitudes (spectrum) for each filter [#channels, #blocks, filter_bands_n]
+    :return:                  tonality vector [#channels, #blocks]
+    """
+    mdct_intensity = tf.pow(mdct_amplitudes, 2)
+    return tf.minimum(1.0, 10 * tf.math.log(tf.divide(
+      tf.exp(tf.reduce_mean(tf.math.log(tf.maximum(_EPSILON**2, mdct_intensity)), axis=2, keepdims=False)),
+      tf.reduce_mean(mdct_intensity, axis=2, keepdims=False) + _EPSILON**2)) / (-60.0 * math.log(10.0)))
+
+  def _global_masking_threshold_in_bark(self, mdct_amplitudes, tonality_per_block, drown=0.):
     """Determines which amplitudes we cannot hear, either since they are too soft
     to hear or because other louder amplitudes are masking it.
     Method uses non-linear superposition determined by factor alpha
 
-    :param mdct_amplitudes:   vector of mdct amplitudes (spectrum) for each filter [#channels, #blocks, filter_bands_n]
-    :param drown:             factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
-    :return:                  masking threshold [#channels, #blocks, bark_bands_n]
+    :param mdct_amplitudes:     vector of mdct amplitudes (spectrum) for each filter [#channels, #blocks, filter_bands_n]
+    :param tonality_per_block:  tonality vector associated with the mdct_amplitudes [#channels, #blocks]
+    :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
+    :return:                    masking threshold [#channels, #blocks, bark_bands_n]
     """
     with tf.name_scope('global_masking_threshold'):
-      masking_threshold = self._masking_threshold_in_bark(mdct_amplitudes, drown)
+      masking_threshold = self._masking_threshold_in_bark(mdct_amplitudes, tonality_per_block, drown)
 
       # Take max between quiet threshold and masking threshold
       # Note: even though both thresholds are expressed as amplitudes,
@@ -173,26 +191,19 @@ class PsychoacousticModel:
 
     return global_mask_threshold_in_bark
 
-  def _masking_threshold_in_bark(self, mdct_amplitudes, drown=0.):
+  def _masking_threshold_in_bark(self, mdct_amplitudes, tonality_per_block, drown=0.):
     """Returns amplitudes that are masked by the sound defined by mdct_amplitudes
 
-    :param mdct_amplitudes:   mdct amplitudes (spectrum) for each filter [#channels, #blocks, filter_bands_n]
-    :param drown:             factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
-    :return:                  vector of amplitudes in dB for softest audible sounds given a certain sound [#channels, #blocks, bark_bands_n]
+    :param mdct_amplitudes:     mdct amplitudes (spectrum) for each filter [#channels, #blocks, filter_bands_n]
+    :param tonality_per_block:  tonality vector associated with the mdct_amplitudes [#channels, #blocks]
+    :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
+    :return:                    vector of amplitudes in dB for softest audible sounds given a certain sound [#channels, #blocks, bark_bands_n]
     """
     max_frequency = self.sample_rate / 2.0  # Nyquist frequency: maximum frequency given a sample rate
     max_bark = self.freq2bark(max_frequency)
 
-    # compute tonality (0:white noise ... 1:tonal) from the spectral flatness measure
-    # (SFM = 0dB for white noise, SFM << 0dB for pure tone)
-    # tonality = 10./-60. * \log_10  (e^{1/N \sum_{filter_band_i} \ln(a_i^2)}) /
-    #                                (1/N \sum_{filter_band_i} a_i^2)
-    mdct_intensity = tf.pow(mdct_amplitudes, 2)
-    tonality = tf.minimum(1.0, 10 * tf.math.log(tf.divide(
-      tf.exp(tf.reduce_mean(tf.math.log(tf.maximum(_EPSILON**2, mdct_intensity)), axis=2, keepdims=True)),
-      tf.reduce_mean(mdct_intensity, axis=2, keepdims=True) + _EPSILON**2)) / (-60.0 * math.log(10.0)))
     # add bark_bands_n dimension: [#channels, #blocks, bark_bands_n]
-    tonality = tf.tile(tonality, multiples=[1, 1, self.bark_bands_n])
+    tonality = tf.tile(tf.expand_dims(tonality_per_block, axis=-1), multiples=[1, 1, self.bark_bands_n])
 
     # compute masking offset: O(i) = tonality (14.5 + i) + (1 - tonality) 5.5
     # note: einsum('.i.,.i.->.i.') does an element-wise multiplication (and no sum) along a specified axes
