@@ -159,7 +159,7 @@ def test_mdct2_gradient():
   # play_wav(wave_data, sample_rate)
 
   # 1. to freq space
-  spectrum_original = pa.ampl_to_norm(mdct.transform(wave_data))
+  spectrum_original = pa.dB_ampl_to_norm(mdct.transform(wave_data))
 
   pattern_length_original = 100
   mdct2 = MDCT(pattern_length_original, dB_max=_dB_MAX, window_type='vorbis')
@@ -204,7 +204,7 @@ def test_psychoacoustic_gradient():
 
   # manipulate signal
   mdct_ampl = mdct.transform(wave_data)
-  mdct_norm = pa.ampl_to_norm(mdct_ampl)
+  mdct_norm = pa.dB_ampl_to_norm(mdct_ampl)
   mdct_norm = mdct_norm[0:1, :, :]
 
   # filter (strong beta to make visual difference)
@@ -268,7 +268,7 @@ def test_mdct2():
   # codec_utils.play_wav(wave_data, sample_rate)
 
   # 1. to freq space
-  spectrum_original = pa.ampl_to_norm(mdct.transform(wave_data))
+  spectrum_original = pa.dB_ampl_to_norm(mdct.transform(wave_data))
 
   # 2. psychoacoustic filter [channel = 0, #blocks, freq_bucket]
   spectrum_pa = psychoacoustic.lrelu_filter(spectrum_original, drown, max_gradient=1000)
@@ -283,7 +283,7 @@ def test_mdct2():
         perm=[1, 0]))
 
     # 4. butterworth filter in time-domain
-    wave_pa = mdct.inverse_transform(pa.norm_to_ampl(spectrum_pa))
+    wave_pa = mdct.inverse_transform(pa.norm_to_dB_ampl(spectrum_pa))
     nyq = 0.5 * sample_rate
     print("Time domain Nyquist frequency = ", nyq)
     lowcut = 200
@@ -298,7 +298,7 @@ def test_mdct2():
     plt.plot(wave_pa_filtered[0, :])
     plt.show()
     #
-    spectrum_pa_tfilter = pa.ampl_to_norm(mdct.transform(wave_pa_filtered))
+    spectrum_pa_tfilter = pa.dB_ampl_to_norm(mdct.transform(wave_pa_filtered))
     # extra psychoacoustic filter
     spectrum_pa_tfilter = psychoacoustic.lrelu_filter(spectrum_pa_tfilter, drown, max_gradient=1000)
   else:
@@ -380,7 +380,7 @@ def test_mdct2():
   #   tf.stack([spectrum1_recon, tf.zeros(tf.shape(spectrum1_recon))], axis=2),
   #   shape=[tf.shape(spectrum1_recon)[0], 2*tf.shape(spectrum1_recon)[1], tf.shape(spectrum1_recon)[2]])
   # [#channels = freq_buckets, #blocks+2]
-  wave_reproduced = mdct.inverse_transform(pa.norm_to_ampl(spectrum1_recon))
+  wave_reproduced = mdct.inverse_transform(pa.norm_to_dB_ampl(spectrum1_recon))
 
   # play and save reconstructed wav
   # codec_utils.play_wav(wave_reproduced, sample_rate)
@@ -449,7 +449,7 @@ def test_octave():
 
   # manipulate signal
   mdct_ampl = mdct.transform(wave_data)
-  spectrum = pa.ampl_to_norm(mdct_ampl)
+  spectrum = pa.dB_ampl_to_norm(mdct_ampl)
 
   # filter
   spectrum_modified = psychoacoustic.lrelu_filter(spectrum, drown, max_gradient=1000)
@@ -493,14 +493,14 @@ def test_psychoacoustic():
 
   # manipulate signal
   mdct_ampl = mdct.transform(wave_data)
-  spectrum = pa.ampl_to_norm(mdct_ampl)
+  spectrum = pa.dB_ampl_to_norm(mdct_ampl)
 
   # filter
   spectrum_modified = psychoacoustic.lrelu_filter(spectrum, drown, max_gradient=5)
   codec_utils.save_spectrogram(spectrum_modified, audio_filepath + audio_filename + audio_filename_post_fix + ".png")
 
   # back to audio signal
-  wave_reproduced = mdct.inverse_transform(pa.norm_to_ampl(spectrum_modified))
+  wave_reproduced = mdct.inverse_transform(pa.norm_to_dB_ampl(spectrum_modified))
 
   # plot both spectrograms
   if True:
@@ -584,7 +584,7 @@ def test_mdct():
 
   # plot spectrogram
   fig, ax = plt.subplots(nrows=1)
-  codec_utils.plot_spectrogram(ax, pa.ampl_to_norm(spectrum), sample_rate, filter_bands_n)
+  codec_utils.plot_spectrogram(ax, pa.dB_ampl_to_norm(spectrum), sample_rate, filter_bands_n)
   plt.show()
 
   # play and save reconstructed wav

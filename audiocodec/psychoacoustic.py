@@ -73,10 +73,10 @@ class PsychoacousticModel:
     :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
     :return:                    modified amplitudes [#channels, #blocks, filter_bands_n]
     """
-    mdct_amplitudes = norm_to_ampl(mdct_norm)
+    mdct_amplitudes = norm_to_dB_ampl(mdct_norm)
     tonality_per_block = self.tonality(mdct_amplitudes)
     total_threshold = self.global_masking_threshold(mdct_amplitudes, tonality_per_block, drown)
-    threshold_norm = ampl_to_norm(total_threshold)
+    threshold_norm = dB_ampl_to_norm(total_threshold)
 
     # Update spectrum
     # 1. remove anything below masking threshold
@@ -95,22 +95,28 @@ class PsychoacousticModel:
     return mdct_modified_norm
 
   @tf.function
-  def lrelu_filter(self, mdct_norm, drown=0.0, max_gradient: int = 10):
+  def add_noise(self, mdct_norm, total_masking_norm):
+    noise = tf.random.uniform(shape=mdct_norm.shape, minval=-total_masking_norm / 2., maxval=total_masking_norm / 2.)
+    return mdct_norm + noise
+
+  @tf.function
+  def lrelu_filter(self, mdct_norm, drown=0.0, max_gradient: int = 10, sprinkle_noise=False):
     """Leaky ReLU suppression of in-audible frequencies
 
     :param mdct_norm:           mdct amplitudes in -1..1 range         [#channels, #blocks, filter_bands_n]
     :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
     :param max_gradient:        maximum gradient of this lrelu (1/max_gradient corresponds with the normal lReLU factor)
+    :param sprinkle_noise:      adds gaussian noise with std dev based on masking threshold, before the ReLU filter
     :return:                    filtered normalized mdct amplitudes    [#channels, #blocks, filter_bands_n]
     """
     # get masking threshold in norm space
     tf.debugging.assert_less_equal(tf.reduce_max(tf.abs(mdct_norm)), 1.,
                                    "psychoacoustic.lrelu_filter inputs should be in the -1..1 range")
 
-    mdct_amplitudes = norm_to_ampl(mdct_norm)
+    mdct_amplitudes = norm_to_dB_ampl(mdct_norm)
     tonality_per_block = self.tonality(mdct_amplitudes)
     total_threshold = self.global_masking_threshold(mdct_amplitudes, tonality_per_block, drown)
-    total_masking_norm = ampl_to_norm(total_threshold)
+    total_masking_norm = dB_ampl_to_norm(total_threshold)
 
     # LeakyReLU-based filter: suppress in-audible frequencies (in norm space)
     # noise = tf.random.uniform(tf.shape(mdct_norm), minval=0., maxval=1.)
@@ -149,7 +155,18 @@ class PsychoacousticModel:
     # https://stackoverflow.com/questions/33712178/tensorflow-nan-bug/42497444#42497444
     #
     def f_attentuation(x):
+      # function with
+      #   f(0)  = 0.
+      #   f(1)  = 1.
+      #   f'(0) = max_gradient / (2**(max_gradient+1) - 2)  >~  0
+      #   f'(1) = max_gradient / (1. - 1./2**max_gradient)  >~  max_gradient
       return (1. / (2. - x)**max_gradient - 1./2**max_gradient) / (1. - 1./2**max_gradient)
+
+    if sprinkle_noise:
+      # mp3 encoding introduces noise, since amplitudes are stored as integer multiples of total_masking_norm
+      #   so we have noise with a uniform distribution
+      noise = tf.random.uniform(shape=mdct_norm.shape, minval=-total_masking_norm / 2., maxval=total_masking_norm / 2.)
+      mdct_norm = mdct_norm + noise
 
     x_abs = tf.abs(mdct_norm) / total_masking_norm
     x_abs_safe = tf.where(x_abs < 1., x_abs, 1.)
@@ -354,7 +371,7 @@ class PsychoacousticModel:
     return 600. * tf.sinh(bark_band / 6.)
 
 
-def ampl_to_norm(mdct_amplitudes):
+def dB_ampl_to_norm(mdct_amplitudes):
   """Point-wise converts mdct amplitudes normalized for audio range -10^{dB_max/20}..10^{dB_max/20}
   to normalized -1..1 range
 
@@ -367,7 +384,7 @@ def ampl_to_norm(mdct_amplitudes):
   return mdct_norm
 
 
-def norm_to_ampl(mdct_norm):
+def norm_to_dB_ampl(mdct_norm):
   """Point-wise converts mdct amplitudes normalized in -1..1 range to
   amplitude values in -10^{dB_max/20}..10^{dB_max/20} range,
   such that amplitudes have right scale for psychoacoustic filter

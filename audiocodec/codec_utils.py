@@ -133,7 +133,7 @@ def plot_logspectrum(ax, mdct_norm, sample_rate, filter_bands_n, channel=0):
 
 
 def save_spectrogram(mdct_amplitudes, filepath, channel=0):
-  mdct_norm = pa.ampl_to_norm(mdct_amplitudes)
+  mdct_norm = pa.dB_ampl_to_norm(mdct_amplitudes)
   spectrum = np.flip(np.transpose(mdct_norm[channel, :, :]), axis=0)
 
   mdct_uint8 = 128. * (spectrum + 1.)
@@ -148,7 +148,7 @@ def read_spectrogram(filepath):
   spectrum = mdct_uint8 / 128. - 1.
   mdct_norm = np.transpose(np.flip(spectrum, axis=0))
   mdct_norm = np.expand_dims(mdct_norm, axis=0)
-  mdct_amplitudes = pa.norm_to_ampl(mdct_norm)
+  mdct_amplitudes = pa.norm_to_dB_ampl(mdct_norm)
   mdct_amplitudes = tf.cast(mdct_amplitudes, dtype=tf.float32)
   return mdct_amplitudes
 
