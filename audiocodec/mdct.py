@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-""" Implements a MDCT transformation and inverse transformation on (channel x signal data)
+"""Implements a MDCT transformation and inverse
 
 Loosely based based on code from Gerald Schuller, June 2018 (https://github.com/TUIlmenauAMS/Python-Audio-Coder)
 """
@@ -11,7 +11,7 @@ import math
 
 class MDCT:
   def __init__(self, filters_n=1024, window_type='vorbis'):
-    """Computes required initialization matrices (stateless, no OOP)
+    """Computes required initialization matrices
     Note: H and H_inv are very sparse (2xfilter_n non-zero elements, arranged in diamond shape),
     yet TF2.0 does not support tf.nn.convolution for SparseTensor
     todo: work out polymatmul(x_pp, H) and polymatmul(y, H_inv) in more efficient way
@@ -24,12 +24,14 @@ class MDCT:
 
     self.filters_n = filters_n
     self.window_type = window_type
+
+    # pre-compute some matrices
     self.H = self._polyphase_matrix()
     self.H_inv = self._inv_polyphase_matrix()
 
   def _polyphase_matrix(self):
     """Decomposed part of poly-phase matrix of an MDCT filter bank, with a sine modulated window:
-      H(z) = F_{analysis} x D x DCT4 =
+      H(z) = (F_{analysis} x D) x DCT4
 
       The window function needs to satisfy:
       1. w_n = w_{2N-1-n}        (symmetry)
@@ -41,26 +43,26 @@ class MDCT:
     :return:             F_{analysis} x D           [filters_n, filters_n, 2]
     """
     F_analysis = tf.expand_dims(
-      self._filter_window_matrix(), axis=1)                           # [filters_n, 1, filters_n]
-    D = self._delay_matrix()                                          # [2, filters_n, filters_n]
-    polyphase_matrix = self._polymatmul(F_analysis, D)                # [filters_n, 2, filters_n]
+      self._filter_window_matrix(), axis=1)                           # [filters_n, 1 (=blocks_n), filters_n]
+    D = self._delay_matrix()                                          # [2 (=blocks_n), filters_n, filters_n]
+    polyphase_matrix = self._polymatmul(F_analysis, D)                # [filters_n, 2 (=blocks_n), filters_n]
 
-    return tf.transpose(polyphase_matrix, perm=[1, 0, 2])             # [2, filters_n, filters_n]
+    return tf.transpose(polyphase_matrix, perm=[1, 0, 2])             # [2 (=blocks_n), filters_n, filters_n]
 
   def _inv_polyphase_matrix(self):
     """Decomposed part of inverse poly-phase matrix of an MDCT filter bank, with a sine modulated window:
-      G(z) = DCT4 x D^-1 x F_{synthesis}
+      G(z) = DCT4 x (D^-1 x F_{synthesis})
 
     :return:             D^-1 x F_{synthesis}       [2, filters_n, filters_n]
     """
     # invert Fa matrix for synthesis after removing last dim:
     F_synthesis = tf.expand_dims(
       tf.linalg.inv(
-        self._filter_window_matrix()), axis=0)                             # [1, filters_n, filters_n]
-    D_inv = self._inverse_delay_matrix()                                   # [filters_n, 2, filters_n]
-    inv_polyphase_matrix = self._polymatmul(D_inv, F_synthesis)            # [filters_n, 2, filters_n]
+        self._filter_window_matrix()), axis=0)                             # [1 (=blocks_n), filters_n, filters_n]
+    D_inv = self._inverse_delay_matrix()                                   # [filters_n, 2 (=blocks_n), filters_n]
+    inv_polyphase_matrix = self._polymatmul(D_inv, F_synthesis)            # [filters_n, 2 (=blocks_n), filters_n]
 
-    return tf.transpose(inv_polyphase_matrix, perm=[1, 0, 2])              # [2, filters_n, filters_n]
+    return tf.transpose(inv_polyphase_matrix, perm=[1, 0, 2])              # [2 (=blocks_n), filters_n, filters_n]
 
   @tf.function
   def transform(self, x):
@@ -110,16 +112,23 @@ class MDCT:
     so the maximum output amplitudes are of the order of
        1.
 
-    :param x:            signal data assumed in -1..1 range [channels, #samples]
-    :return:             filters_n coefficients of MDCT transform for each block [#channels, #blocks+1, filters_n]
-                         where #samples = #blocks x filters_n
+    :param x:            signal data assumed in -1..1 range [batches_n, samples_n, channels_n]
+    :return:             filters_n coefficients of MDCT transform for each block [batches_n, blocks_n+1, filter_bands_n, channels_n]
+                         where samples_n = blocks_n x filters_n
                          amplitudes are normalized to be in the ]-1, 1[ range
     """
-    # split signal into blocks
-    x_pp = self._x2polyphase(x)                            # [#channels, #blocks, filters_n]
+    batches_n = x.shape[0]
+    channels_n = x.shape[2]
 
-    # put x through filter bank
-    mdct_amplitudes = self._dct4(self._polymatmul(x_pp, self.H))   # [#channels, #blocks+1, filters_n]
+    # split signal into blocks
+    x_pp = self._split_in_blocks(x)                                    # [batches_n x channels_n, blocks_n, filter_bands_n]
+
+    # put x_pp through filter bank
+    mdct_amplitudes = self._dct4(self._polymatmul(x_pp, self.H))       # [batches_n x channels_n, blocks_n+1, filter_bands_n]
+
+    # un-fold channels dimension
+    mdct_amplitudes = tf.reshape(mdct_amplitudes, shape=[batches_n, channels_n, mdct_amplitudes.shape[1], mdct_amplitudes.shape[2]])
+    mdct_amplitudes = tf.transpose(mdct_amplitudes, perm=[0, 2, 3, 1]) # [batches_n, blocks_n+1, filter_bands_n, channels_n]
 
     # up-scale
     return (1. / tf.sqrt(4. * tf.cast(self.filters_n, dtype=tf.float32))) * mdct_amplitudes
@@ -128,18 +137,26 @@ class MDCT:
   def inverse_transform(self, mdct_amplitudes):
     """MDCT synthesis filter bank.
 
-    :param mdct_amplitudes: mdct amplitudes with shape       [#channels, #blocks, filters_n]
+    :param mdct_amplitudes: mdct amplitudes with shape       [batches_n, blocks_n, filter_bands_n, channels_n]
                             amplitudes should be in -1..1 range
-    :return:                restored signal in range -1..1   [#channels, #samples]
-                            where #samples = (#blocks + 1) x filters_n
+    :return:                restored signal in range -1..1   [batches_n, samples_n, channels_n]
+                            where samples_n = (blocks_n + 1) x filters_n
     """
+    # fold channels dimension into batches
+    batches_n = tf.shape(mdct_amplitudes)[0]
+    channels_n = tf.shape(mdct_amplitudes)[3]
+
+    mdct_amplitudes = tf.transpose(mdct_amplitudes, perm=[0, 3, 1, 2])
+    mdct_amplitudes = tf.reshape(mdct_amplitudes, shape=[-1, mdct_amplitudes.shape[2], mdct_amplitudes.shape[3]])
+    # [batches_n x channels_n, blocks_n, filter_bands_n]
+
     mdct_rescaled = tf.sqrt(4. * tf.cast(self.filters_n, dtype=tf.float32)) * mdct_amplitudes
 
     # put y through inverse filter bank
     x_pp = self._polymatmul(self._dct4(mdct_rescaled), self.H_inv)
 
     # glue back the blocks to one signal
-    x = self._polyphase2x(x_pp)
+    x = self._merge_blocks(x_pp, batches_n, channels_n)
 
     return x
 
@@ -197,8 +214,9 @@ class MDCT:
     b = tf.linalg.diag(tf.concat([tf.zeros(int(self.filters_n / 2)), tf.ones(int(self.filters_n / 2))], axis=0))
     return tf.stack([a, b], axis=1)
 
-  def _x2polyphase(self, x):
-    """Split signal in each channel into blocks of size filters_n.
+  def _split_in_blocks(self, x):
+    """Split signal in each channel into blocks of size filters_n and folds
+    the channel dimension into the batches dimension.
     Last part of signal is ignored, if it does not fit into a block.
 
       x ---+-----> down-sample by filters_n -->
@@ -224,20 +242,31 @@ class MDCT:
                 [...]]]
            with z^-1 being the operator of a 1-block delay on the signal
 
-    :param x:           multi-channel input signal [#channel, #samples]
-    :return:            multi-channel signal split in blocks [#channel, #blocks, filters_n]
-
-    :raises InvalidArgumentError when #samples is not a multiple of filters_n
+    :param x:           multi-channel input signal [batches_n, samples_n, channels_n]
+    :return:            multi-channel signal split in blocks [batches_n x channels_n, blocks_n, filter_bands_n]
+    :raises             InvalidArgumentError when samples_n is not a multiple of filter_bands_n
     """
-    return tf.reshape(x, [tf.shape(x)[0], -1, self.filters_n])
+    batches_n = x.shape[0]
+    channels_n = x.shape[2]
 
-  def _polyphase2x(self, xp):
-    """Glues back together the blocks (on axis=1)
+    x_transpose = tf.transpose(x, perm=[0, 2, 1])
+    # 1. fold channels dimension into batches and
+    # 2. split in blocks
+    x_pp = tf.reshape(x_transpose, shape=[batches_n * channels_n, -1, self.filters_n])
 
-    :param xp:  multi-channel signal split in blocks [#channel, #blocks, filters_n]
-    :return:    multi-channel signal [#channel, #samples]
+    return x_pp
+
+  def _merge_blocks(self, xp, batches_n: tf.Tensor, channels_n: tf.Tensor):
+    """Glues back together the blocks (on axis=1) and un-folds the channels from the batches dimension
+
+    :param xp:  multi-channel signal split in blocks [batches_n x channels_n, blocks_n, filter_bands_n]
+    :return:    multi-channel signal [batches_n, samples_n, channels_n]
     """
-    return tf.reshape(xp, [tf.shape(xp)[0], -1])
+    # un-fold channels dimension
+    xp = tf.reshape(xp, shape=[batches_n, channels_n, -1])
+    xp = tf.transpose(xp, perm=[0, 2, 1])
+
+    return xp
 
   def _dct4(self, samples):
     """Orthogonal DCT4 transformation on axis=1 of samples
@@ -249,9 +278,9 @@ class MDCT:
     as can be seen from the dct4 formula above.
     Note: DCT4 is its own reverse
 
-    :param samples:     3d array of samples already in shape [#channels, #blocks, filters_n]
+    :param samples:     3d array of samples already in shape [batches_n x channels_n, blocks_n, filters_n]
                         axis=-1 are filter_n samples from the signal, on which the DCT4 is performed
-    :return:            3-D array where axis=1 is DCT4-transformed, orthonormal with shape [#channel, #blocks, filters_n]
+    :return:            3-D array where axis=1 is DCT4-transformed, orthonormal with shape [batches_n x channels_n, blocks_n, filters_n]
                         axis=2 contains coefficients of the cosine harmonics which compose the filters_n block signal
     """
     # up-sample by inserting zeros for all even entries: this allows us to express DCT-IV as a DCT-III
@@ -269,12 +298,12 @@ class MDCT:
     """Matrix multiplication of matrices where each entry is a polynomial.
 
     :param A: 3D matrix A, with 2nd dimension the polynomial coefficients
-    :param F: 3D matrix F, with 1st dimension the polynomial coefficients
+    :param F: 3D matrix F, with 1st dimension the polynomial coefficients (filter/kernel)
     :return:  3D matrix C, with 2nd dimension the polynomial coefficients
-          C_{i n k} = \\sum_{m=0}^n    \\sum_j A{i m j}           F_{n-m jk}
-                    = \\sum_{m=0}^n    \\sum_j A{i m j}           F_flip{f-n+m jk}   with f=tf.shape(F)[2]-1=degree(F)
-                    = \\sum_{mm=f-n}^f \\sum_j A{i mm-f+n j}      F_flip{mm jk}      with mm=m+(f-n)
-                    = \\sum {mm=f-n}^f \\sum_j A_padded{i mm+n j} F_flip{mm jk}      A padded with degree(F)
+          C_{b n k} = \\sum_{m=0}^n    \\sum_q A{b m q}           F_{n-m q k}
+                    = \\sum_{m=0}^n    \\sum_q A{b m q}           F_flip{f-n+m q k}   with f=tf.shape(F)[0]-1=degree(F)
+                    = \\sum_{mm=f-n}^f \\sum_q A{b mm-f+n q}      F_flip{mm q k}      with mm=m+(f-n)
+                    = \\sum {mm=f-n}^f \\sum_q A_padded{b mm+n q} F_flip{mm q k}      A padded with degree(F)
                     = tf.nn.convolution(A_padded, F_flip)
         where F plays role of filter (kernel) which is dragged over the padded A.
     """

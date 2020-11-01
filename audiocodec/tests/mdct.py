@@ -12,7 +12,7 @@ def sine_wav(amplitude, frequency, sample_rate=44100, duration_sec=2.0):
   """Create wav which contains sine wave
   """
   wave_data = amplitude * np.sin(2.0 * np.pi * frequency * tf.range(0, sample_rate * duration_sec, dtype=tf.float32) / sample_rate)
-  return wave_data[np.newaxis, :]
+  return tf.reshape(wave_data, shape=[1, -1, 1])
 
 
 class TestMDCT(unittest.TestCase):
