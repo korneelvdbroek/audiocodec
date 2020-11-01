@@ -36,6 +36,44 @@ class TestMDCT(unittest.TestCase):
 
     self.assertLess(zero, EPS, "Should be zero")
 
+  def test_mdct_calculation(self):
+    """Compute mdct on sin function"""
+    # mdct setup
+    filters_n = 64
+    mdct = MDCT(filters_n)
+
+    # create test signal
+    wave_data = sine_wav(0.8, 4, sample_rate=64, duration_sec=4.)
+    wave_data = wave_data[:, 0:filters_n * int(wave_data.shape[1] / filters_n)]
+
+    # transform and go back
+    spectrum = mdct.transform(wave_data)
+    correct_spectrum = [-0.000412722176, 0.000430465181, 0.000789350364, -0.000867388735, -0.00275337417,
+                        0.0132110268, 0.0193885863, 0.156005412, -0.233544752, -0.0129148215]
+    for i, a in enumerate(correct_spectrum):
+      self.assertAlmostEquals(spectrum[0, 1, i, 0], a)
+
+  def test_mdct_shape(self):
+    """Check shape of mdct transform"""
+    # mdct setup
+    filters_n = 64
+    mdct = MDCT(filters_n)
+
+    # create test signal
+    batches_n = 128
+    blocks_n = 10
+    samples_n = blocks_n*filters_n
+    channels_n = 2
+    wave_data = tf.random.normal(shape=(batches_n, samples_n, channels_n))
+
+    # transform and go back
+    spectrum = mdct.transform(wave_data)
+
+    self.assertEqual(tf.shape(spectrum)[0], batches_n)
+    self.assertEqual(spectrum.shape[1], blocks_n+1)
+    self.assertEqual(spectrum.shape[2], filters_n)
+    self.assertEqual(spectrum.shape[3], channels_n)
+
 
 if __name__ == '__main__':
   unittest.main()
