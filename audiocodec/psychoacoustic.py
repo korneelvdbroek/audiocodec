@@ -13,6 +13,7 @@ _dB_MAX = 100.           # corresponds with abs(amplitude) = 1.
 _AMPLITUDE_EPS = 1e-6    # corresponds with a dB_min of -20dB
 
 
+
 def amplitude_to_dB(amplitude):
   """Utility function to convert the amplitude which is normalized in the [-1..1] range to dB.
   The dB scale is set such that an amplitude of 1 (or -1) corresponds to the maximum dB level (_dB_MAX)
