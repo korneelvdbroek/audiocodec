@@ -19,12 +19,15 @@ class TestPsychoacoustic(unittest.TestCase):
     wave_data = mdct_tests.sine_wav(0.8, 1024, sample_rate=sample_rate, duration_sec=5.)
     # transform
     ampl = mdct.transform(wave_data)
+    # todo: need to get rid of this rescaling...
+    ampl = ampl * 10**5
 
     pa_model = psychoacoustic.PsychoacousticModel(sample_rate=sample_rate, filter_bands_n=filters_n)
     tonality = pa_model.tonality(ampl)
     masking_threshold = pa_model.global_masking_threshold(ampl, tonality)
     quiet_threshold = pa_model._mappingfrombark(pa_model._quiet_threshold_amplitude_in_bark(dtype=tf.float32))
 
+    # convert to dB [just for plotting convenience]
     intensity_dB = 10. * tf.math.log(ampl ** 2.0) / tf.math.log(10.)
     masking_threshold_dB = 10. * tf.math.log(masking_threshold ** 2.0) / tf.math.log(10.)
     quiet_threshold_dB = 10. * tf.math.log(quiet_threshold ** 2.0) / tf.math.log(10.)
@@ -150,10 +153,20 @@ class TestPsychoacoustic(unittest.TestCase):
                                   -6.38850212, -6.38850212, -6.38850212, -6.38850212, -6.38850212, -6.38850212,
                                   -6.38850212, -6.38850212, -6.38850212, -6.38850212, -6.38850212]
 
+    tf.print(intensity_dB[0, 3, :, 0], summarize=20)
+    tf.print(tf.constant(intensity_dB_correct), summarize=20)
+    tf.print()
+    tf.print(masking_threshold_dB[0, 3, :, 0], summarize=20)
+    tf.print(tf.constant(masking_threshold_dB_correct), summarize=20)
+    tf.print()
+    tf.print(quiet_threshold_dB[0, 0, :, 0], summarize=20)
+    tf.print(tf.constant(quiet_threshold_dB_correct), summarize=20)
+    tf.print()
+
     for i in range(filters_n):
-      self.assertLess(np.fabs(intensity_dB[0, 3, i].numpy() - intensity_dB_correct[i]), EPS)
-      self.assertLess(np.fabs(masking_threshold_dB[0, 3, i].numpy() - masking_threshold_dB_correct[i]), EPS)
-      self.assertLess(np.fabs(quiet_threshold_dB[0, 0, i].numpy() - quiet_threshold_dB_correct[i]), EPS)
+      self.assertLess(np.fabs(intensity_dB[0, 3, i, 0].numpy() - intensity_dB_correct[i]), EPS)
+      self.assertLess(np.fabs(masking_threshold_dB[0, 3, i, 0].numpy() - masking_threshold_dB_correct[i]), EPS)
+      self.assertLess(np.fabs(quiet_threshold_dB[0, 0, i, 0].numpy() - quiet_threshold_dB_correct[i]), EPS)
 
   def test_tonality_tone(self):
     filters_n = 64
