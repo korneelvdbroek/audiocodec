@@ -365,7 +365,7 @@ def test_mdct2():
       tf.print(intensity_raw)
       tf.print(intensity_blurred)
       tf.print(tf.shape(intensity_blurred))
-      spectrum2_mods = tf.sign(tap_space_filtered) * tf.pow(tf.maximum(intensity_blurred, pa._EPSILON), 1./2.)
+      spectrum2_mods = tf.sign(tap_space_filtered) * tf.pow(tf.maximum(intensity_blurred, pa._AMPLITUDE_EPS), 1. / 2.)
     else:
       spectrum2_mods = tap_space_filtered
 

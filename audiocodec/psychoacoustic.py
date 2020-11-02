@@ -9,7 +9,22 @@ See also chapter 9 in "Digital Audio Signal Processing" by Udo Zolzer
 import tensorflow as tf
 import math
 
-_EPSILON = 1e-6
+_dB_MAX = 100.           # corresponds with abs(amplitude) = 1. 
+_AMPLITUDE_EPS = 1e-6    # corresponds with a dB_min of -20dB
+
+
+def amplitude_to_dB(amplitude):
+  """Utility function to convert the amplitude which is normalized in the [-1..1] range to dB.
+  The dB scale is set such that an amplitude of 1 (or -1) corresponds to the maximum dB level (_dB_MAX)
+
+  :param amplitude:  amplitude normalized in [-1..1] range
+  :return:           corresponding dB scale
+  """
+  # return 10. * tf.math.log(amplitude ** 2.0) / tf.math.log(10.) + _dB_MAX
+  return 10. * tf.math.log(tf.maximum(_AMPLITUDE_EPS ** 2.0, amplitude ** 2.0)) / tf.math.log(10.) + _dB_MAX
+
+
+_dB_MIN = amplitude_to_dB(_AMPLITUDE_EPS)
 
 
 class PsychoacousticModel:
@@ -44,8 +59,8 @@ class PsychoacousticModel:
     mdct_intensity = tf.pow(mdct_amplitudes, 2)
 
     sfm = 10 * tf.math.log(tf.divide(
-      tf.exp(tf.reduce_mean(tf.math.log(tf.maximum(_EPSILON**2, mdct_intensity)), axis=2, keepdims=True)),
-      tf.reduce_mean(mdct_intensity, axis=2, keepdims=True) + _EPSILON**2)) / math.log(10.0)
+      tf.exp(tf.reduce_mean(tf.math.log(tf.maximum(_AMPLITUDE_EPS ** 2, mdct_intensity)), axis=2, keepdims=True)),
+      tf.reduce_mean(mdct_intensity, axis=2, keepdims=True) + _AMPLITUDE_EPS ** 2)) / math.log(10.0)
 
     return tf.minimum(sfm / -60., 1.0)
 
@@ -103,9 +118,9 @@ class PsychoacousticModel:
     # Non-linear superposition (see p13 ./docs/05_shl_AC_Psychacoustics_Models_WS-2016-17_gs.pdf)
     # \alpha ~ 0.3 is valid for 94 bark_bands_n; with less bark_bands_n 0.3 leads to (way) too much masking
     amplitudes_in_bark = self._mapping2bark(mdct_amplitudes)
-    intensity_in_bark = tf.pow(tf.maximum(_EPSILON, amplitudes_in_bark), 2. * self.alpha)
+    intensity_in_bark = tf.pow(tf.maximum(_AMPLITUDE_EPS, amplitudes_in_bark), 2. * self.alpha)
     masking_intensity_in_bark = tf.einsum('nbic,nbijc->nbjc', intensity_in_bark, masking_matrix)
-    masking_amplitude_in_bark = tf.pow(tf.maximum(_EPSILON**2, masking_intensity_in_bark), 1. / (2. * self.alpha))
+    masking_amplitude_in_bark = tf.pow(tf.maximum(_AMPLITUDE_EPS ** 2, masking_intensity_in_bark), 1. / (2. * self.alpha))
 
     return masking_amplitude_in_bark
 
@@ -149,14 +164,15 @@ class PsychoacousticModel:
 
     # Threshold of quiet expressed as amplitude (dB) for each Bark bands
     # (see also p4 ./docs/05_shl_AC_Psychacoustics_Models_WS-2016-17_gs.pdf -- slide has 6.5 typo)
+    # see (9.3) in "Digital Audio Signal Processing" by Udo Zolzer
     quiet_threshold_dB = tf.clip_by_value(
       (3.64 * (tf.pow(bark_bands_mid_kHz, -0.8))
        - 6.5 * tf.exp(-0.6 * tf.pow(bark_bands_mid_kHz - 3.3, 2.))
        + 1e-3 * (tf.pow(bark_bands_mid_kHz, 4.))),
       -20, 160)
 
-    # convert dB to amplitude
-    quiet_threshold_amplitude = tf.reshape(tf.pow(10.0, quiet_threshold_dB / 20), shape=[1, 1, -1, 1])
+    # convert dB to amplitude, where _dB_MAX corresponds with an amplitude of 1.0
+    quiet_threshold_amplitude = tf.reshape(tf.pow(10.0, (quiet_threshold_dB - _dB_MAX) / 20), shape=[1, 1, -1, 1])
 
     return quiet_threshold_amplitude
 
@@ -199,7 +215,7 @@ class PsychoacousticModel:
 
     # (bark_band_n x bark_band_n) . (bark_band_n x filter_bank_n)
     W_transpose = tf.transpose(W, perm=[1, 0])
-    W_inv = tf.tensordot(tf.linalg.diag(tf.pow(1.0 / tf.maximum(_EPSILON**2, tf.reduce_sum(W_transpose, axis=1)), 0.5)),
+    W_inv = tf.tensordot(tf.linalg.diag(tf.pow(1.0 / tf.maximum(_AMPLITUDE_EPS ** 2, tf.reduce_sum(W_transpose, axis=1)), 0.5)),
                          W_transpose, axes=[[1], [0]])
 
     return W, W_inv
@@ -217,7 +233,7 @@ class PsychoacousticModel:
     # tf.maximum() is necessary, to make sure rounding errors don't make the gradient nan!
     mdct_intensity = tf.pow(mdct_amplitudes, 2)
     mdct_intensity_in_bark = tf.einsum('nbic,ij->nbjc', mdct_intensity, self.W)
-    mdct_amplitudes_in_bark = tf.pow(tf.maximum(_EPSILON**2, mdct_intensity_in_bark), 0.5)
+    mdct_amplitudes_in_bark = tf.pow(tf.maximum(_AMPLITUDE_EPS ** 2, mdct_intensity_in_bark), 0.5)
 
     return mdct_amplitudes_in_bark
 

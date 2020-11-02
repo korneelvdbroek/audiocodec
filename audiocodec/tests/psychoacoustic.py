@@ -11,26 +11,59 @@ EPS = 1e-5
 
 
 class TestPsychoacoustic(unittest.TestCase):
+  def test_tonality_tone(self):
+    filters_n = 64
+    mdct = MDCT(filters_n)
+    # create test signal
+    wave_data = mdct_tests.sine_wav(0.8, 4, sample_rate=64, duration_sec=5.)
+    # transform
+    spectrum = mdct.transform(wave_data)
+
+    pa_model = psychoacoustic.PsychoacousticModel(sample_rate=filters_n, filter_bands_n=filters_n)
+    tonality = pa_model.tonality(spectrum)
+    self.assertEqual(tonality[0, 1], 1.)
+
+  def test_tonality_noise(self):
+    filters_n = 64
+    blocks_n = 10
+    mdct = MDCT(filters_n)
+    # create test signal
+    batches_n = 10
+    channels_n = 2
+    wave_data = tf.random.uniform(shape=(batches_n, blocks_n*filters_n, channels_n), minval=-1.0, maxval=1.0)
+    # transform
+    spectrum = mdct.transform(wave_data)
+
+    pa_model = psychoacoustic.PsychoacousticModel(sample_rate=filters_n, filter_bands_n=filters_n)
+    tonality = pa_model.tonality(spectrum)
+
+    # check tonality shape
+    self.assertEqual(tonality.shape[0], batches_n)
+    self.assertEqual(tonality.shape[1], blocks_n+1)
+    self.assertEqual(tonality.shape[2], 1)
+    self.assertEqual(tonality.shape[3], channels_n)
+
+    # check tonality is low
+    self.assertLess(tf.reduce_mean(tonality[0, 1:-1]), 0.1)
+
   def test_masking_threshold(self):
     filters_n = 256
     sample_rate = 64*filters_n
     mdct = MDCT(filters_n)
-    # create test signal
+    # create test signal & transform
     wave_data = mdct_tests.sine_wav(0.8, 1024, sample_rate=sample_rate, duration_sec=5.)
-    # transform
     ampl = mdct.transform(wave_data)
-    # todo: need to get rid of this rescaling...
-    ampl = ampl * 10**5
 
+    # compute masking threshold
     pa_model = psychoacoustic.PsychoacousticModel(sample_rate=sample_rate, filter_bands_n=filters_n)
     tonality = pa_model.tonality(ampl)
     masking_threshold = pa_model.global_masking_threshold(ampl, tonality)
     quiet_threshold = pa_model._mappingfrombark(pa_model._quiet_threshold_amplitude_in_bark(dtype=tf.float32))
 
     # convert to dB [just for plotting convenience]
-    intensity_dB = 10. * tf.math.log(ampl ** 2.0) / tf.math.log(10.)
-    masking_threshold_dB = 10. * tf.math.log(masking_threshold ** 2.0) / tf.math.log(10.)
-    quiet_threshold_dB = 10. * tf.math.log(quiet_threshold ** 2.0) / tf.math.log(10.)
+    amplitude_dB = psychoacoustic.amplitude_to_dB(ampl)
+    masking_threshold_dB = psychoacoustic.amplitude_to_dB(masking_threshold)
+    quiet_threshold_dB = psychoacoustic.amplitude_to_dB(quiet_threshold)
 
     intensity_dB_correct = [-4.02038908, -3.99509621, -3.19901395, -4.27961969, -2.1361413, -3.62612677, -0.89654,
                             -2.42287517, 0.415709436, -0.991663277, 2.33745766, 0.804221451, 4.93179, 3.65039945,
@@ -153,55 +186,17 @@ class TestPsychoacoustic(unittest.TestCase):
                                   -6.38850212, -6.38850212, -6.38850212, -6.38850212, -6.38850212, -6.38850212,
                                   -6.38850212, -6.38850212, -6.38850212, -6.38850212, -6.38850212]
 
-    tf.print(intensity_dB[0, 3, :, 0], summarize=20)
-    tf.print(tf.constant(intensity_dB_correct), summarize=20)
-    tf.print()
-    tf.print(masking_threshold_dB[0, 3, :, 0], summarize=20)
-    tf.print(tf.constant(masking_threshold_dB_correct), summarize=20)
-    tf.print()
-    tf.print(quiet_threshold_dB[0, 0, :, 0], summarize=20)
-    tf.print(tf.constant(quiet_threshold_dB_correct), summarize=20)
-    tf.print()
+    def assertAlmostEqual(x, y, index, var_name):
+      self.assertLess(np.fabs(x - np.clip(y, a_min=psychoacoustic._dB_MIN, a_max=None)), 1e-1,
+                      f"Index {index} of the {var_name} ({x}) is not equal to {y}")
 
-    for i in range(filters_n):
-      self.assertLess(np.fabs(intensity_dB[0, 3, i, 0].numpy() - intensity_dB_correct[i]), EPS)
-      self.assertLess(np.fabs(masking_threshold_dB[0, 3, i, 0].numpy() - masking_threshold_dB_correct[i]), EPS)
-      self.assertLess(np.fabs(quiet_threshold_dB[0, 0, i, 0].numpy() - quiet_threshold_dB_correct[i]), EPS)
-
-  def test_tonality_tone(self):
-    filters_n = 64
-    mdct = MDCT(filters_n)
-    # create test signal
-    wave_data = mdct_tests.sine_wav(0.8, 4, sample_rate=64, duration_sec=5.)
-    # transform
-    spectrum = mdct.transform(wave_data)
-
-    pa_model = psychoacoustic.PsychoacousticModel(sample_rate=filters_n, filter_bands_n=filters_n)
-    tonality = pa_model.tonality(spectrum)
-    self.assertEqual(tonality[0, 1], 1.)
-
-  def test_tonality_noise(self):
-    filters_n = 64
-    blocks_n = 10
-    mdct = MDCT(filters_n)
-    # create test signal
-    batches_n = 10
-    channels_n = 2
-    wave_data = tf.random.uniform(shape=(batches_n, blocks_n*filters_n, channels_n), minval=-1.0, maxval=1.0)
-    # transform
-    spectrum = mdct.transform(wave_data)
-
-    pa_model = psychoacoustic.PsychoacousticModel(sample_rate=filters_n, filter_bands_n=filters_n)
-    tonality = pa_model.tonality(spectrum)
-
-    # check tonality shape
-    self.assertEqual(tonality.shape[0], batches_n)
-    self.assertEqual(tonality.shape[1], blocks_n+1)
-    self.assertEqual(tonality.shape[2], 1)
-    self.assertEqual(tonality.shape[3], channels_n)
-
-    # check tonality is low
-    self.assertLess(tf.reduce_mean(tonality[0, 1:-1]), 0.1)
+    batch = 0
+    channel = 0
+    block = 3
+    for freq in range(filters_n):
+      assertAlmostEqual(amplitude_dB[batch, block, freq, channel].numpy(), intensity_dB_correct[freq], freq, 'amplitude_dB')
+      assertAlmostEqual(masking_threshold_dB[batch, block, freq, channel].numpy(), masking_threshold_dB_correct[freq], freq, 'masking_threshold_dB')
+      assertAlmostEqual(quiet_threshold_dB[batch, 0, freq, channel].numpy(), quiet_threshold_dB_correct[freq], freq, 'quiet_threshold_dB')
 
 
 if __name__ == '__main__':
