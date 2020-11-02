@@ -9,7 +9,7 @@ See also chapter 9 in "Digital Audio Signal Processing" by Udo Zolzer
 import tensorflow as tf
 import math
 
-_dB_MAX = 100.           # corresponds with abs(amplitude) = 1. 
+_dB_MAX = 100.           # corresponds with abs(amplitude) = 1.
 _AMPLITUDE_EPS = 1e-6    # corresponds with a dB_min of -20dB
 
 
