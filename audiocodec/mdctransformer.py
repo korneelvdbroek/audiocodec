@@ -9,7 +9,7 @@ import tensorflow as tf
 import math
 
 
-class MDCT:
+class MDCTransformer:
   def __init__(self, filters_n=1024, window_type='vorbis'):
     """Computes required initialization matrices
     Note: H and H_inv are very sparse (2xfilter_n non-zero elements, arranged in diamond shape),
@@ -28,41 +28,6 @@ class MDCT:
     # pre-compute some matrices
     self.H = self._polyphase_matrix()
     self.H_inv = self._inv_polyphase_matrix()
-
-  def _polyphase_matrix(self):
-    """Decomposed part of poly-phase matrix of an MDCT filter bank, with a sine modulated window:
-      H(z) = (F_{analysis} x D) x DCT4
-
-      The window function needs to satisfy:
-      1. w_n = w_{2N-1-n}        (symmetry)
-      2. w_n^2 + w_{n+N}^2 = 1   (Princen-Bradley)
-      So, effectively, one can compute that the transformation of the poly-phase matrix weights the input by
-         w_{i+N} x_i + \\sqrt{1-w_{i+N}^2} x_{N-i}
-      if input x's are maximal (1), then we need to weight with \\sqrt{2}
-
-    :return:             F_{analysis} x D           [filters_n, filters_n, 2]
-    """
-    F_analysis = tf.expand_dims(
-      self._filter_window_matrix(), axis=1)                           # [filters_n, 1 (=blocks_n), filters_n]
-    D = self._delay_matrix()                                          # [2 (=blocks_n), filters_n, filters_n]
-    polyphase_matrix = self._polymatmul(F_analysis, D)                # [filters_n, 2 (=blocks_n), filters_n]
-
-    return tf.transpose(polyphase_matrix, perm=[1, 0, 2])             # [2 (=blocks_n), filters_n, filters_n]
-
-  def _inv_polyphase_matrix(self):
-    """Decomposed part of inverse poly-phase matrix of an MDCT filter bank, with a sine modulated window:
-      G(z) = DCT4 x (D^-1 x F_{synthesis})
-
-    :return:             D^-1 x F_{synthesis}       [2, filters_n, filters_n]
-    """
-    # invert Fa matrix for synthesis after removing last dim:
-    F_synthesis = tf.expand_dims(
-      tf.linalg.inv(
-        self._filter_window_matrix()), axis=0)                             # [1 (=blocks_n), filters_n, filters_n]
-    D_inv = self._inverse_delay_matrix()                                   # [filters_n, 2 (=blocks_n), filters_n]
-    inv_polyphase_matrix = self._polymatmul(D_inv, F_synthesis)            # [filters_n, 2 (=blocks_n), filters_n]
-
-    return tf.transpose(inv_polyphase_matrix, perm=[1, 0, 2])              # [2 (=blocks_n), filters_n, filters_n]
 
   @tf.function
   def transform(self, x):
@@ -159,6 +124,41 @@ class MDCT:
     x = self._merge_blocks(x_pp, batches_n, channels_n)
 
     return x
+
+  def _polyphase_matrix(self):
+    """Decomposed part of poly-phase matrix of an MDCT filter bank, with a sine modulated window:
+      H(z) = (F_{analysis} x D) x DCT4
+
+      The window function needs to satisfy:
+      1. w_n = w_{2N-1-n}        (symmetry)
+      2. w_n^2 + w_{n+N}^2 = 1   (Princen-Bradley)
+      So, effectively, one can compute that the transformation of the poly-phase matrix weights the input by
+         w_{i+N} x_i + \\sqrt{1-w_{i+N}^2} x_{N-i}
+      if input x's are maximal (1), then we need to weight with \\sqrt{2}
+
+    :return:             F_{analysis} x D           [filters_n, filters_n, 2]
+    """
+    F_analysis = tf.expand_dims(
+      self._filter_window_matrix(), axis=1)                           # [filters_n, 1 (=blocks_n), filters_n]
+    D = self._delay_matrix()                                          # [2 (=blocks_n), filters_n, filters_n]
+    polyphase_matrix = self._polymatmul(F_analysis, D)                # [filters_n, 2 (=blocks_n), filters_n]
+
+    return tf.transpose(polyphase_matrix, perm=[1, 0, 2])             # [2 (=blocks_n), filters_n, filters_n]
+
+  def _inv_polyphase_matrix(self):
+    """Decomposed part of inverse poly-phase matrix of an MDCT filter bank, with a sine modulated window:
+      G(z) = DCT4 x (D^-1 x F_{synthesis})
+
+    :return:             D^-1 x F_{synthesis}       [2, filters_n, filters_n]
+    """
+    # invert Fa matrix for synthesis after removing last dim:
+    F_synthesis = tf.expand_dims(
+      tf.linalg.inv(
+        self._filter_window_matrix()), axis=0)                             # [1 (=blocks_n), filters_n, filters_n]
+    D_inv = self._inverse_delay_matrix()                                   # [filters_n, 2 (=blocks_n), filters_n]
+    inv_polyphase_matrix = self._polymatmul(D_inv, F_synthesis)            # [filters_n, 2 (=blocks_n), filters_n]
+
+    return tf.transpose(inv_polyphase_matrix, perm=[1, 0, 2])              # [2 (=blocks_n), filters_n, filters_n]
 
   def _filter_window_matrix(self):
     """Produces a diamond shaped folding matrix F from the sine window which leads to identical analysis and

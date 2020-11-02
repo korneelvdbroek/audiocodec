@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import tensorflow as tf
 
-from audiocodec.mdct import MDCT
+from audiocodec.mdctransformer import MDCTransformer
 
 EPS = 1e-5
 
@@ -21,7 +21,7 @@ class TestMDCT(unittest.TestCase):
 
     # mdct setup
     filters_n = 256
-    mdct = MDCT(filters_n)
+    mdct = MDCTransformer(filters_n)
 
     # create test signal
     wave_data = sine_wav(0.8, 880, sample_rate=16000, duration_sec=1.)
@@ -40,7 +40,7 @@ class TestMDCT(unittest.TestCase):
     """Compute mdct on sin function"""
     # mdct setup
     filters_n = 64
-    mdct = MDCT(filters_n)
+    mdct = MDCTransformer(filters_n)
 
     # create test signal
     wave_data = sine_wav(0.8, 4, sample_rate=64, duration_sec=4.)
@@ -57,7 +57,7 @@ class TestMDCT(unittest.TestCase):
     """Check shape of mdct transform"""
     # mdct setup
     filters_n = 64
-    mdct = MDCT(filters_n)
+    mdct = MDCTransformer(filters_n)
 
     # create test signal
     batches_n = 128

@@ -4,8 +4,8 @@ import numpy as np
 import tensorflow as tf
 
 from audiocodec import psychoacoustic
-from audiocodec.mdct import MDCT
-from audiocodec.tests import mdct as mdct_tests
+from audiocodec.mdctransformer import MDCTransformer
+from audiocodec.tests import test_mdctransformer as mdct_tests
 
 EPS = 1e-5
 
@@ -13,7 +13,7 @@ EPS = 1e-5
 class TestPsychoacoustic(unittest.TestCase):
   def test_tonality_tone(self):
     filters_n = 64
-    mdct = MDCT(filters_n)
+    mdct = MDCTransformer(filters_n)
     # create test signal
     wave_data = mdct_tests.sine_wav(0.8, 4, sample_rate=64, duration_sec=5.)
     # transform
@@ -26,7 +26,7 @@ class TestPsychoacoustic(unittest.TestCase):
   def test_tonality_noise(self):
     filters_n = 64
     blocks_n = 10
-    mdct = MDCT(filters_n)
+    mdct = MDCTransformer(filters_n)
     # create test signal
     batches_n = 10
     channels_n = 2
@@ -49,7 +49,7 @@ class TestPsychoacoustic(unittest.TestCase):
   def test_masking_threshold(self):
     filters_n = 256
     sample_rate = 64*filters_n
-    mdct = MDCT(filters_n)
+    mdct = MDCTransformer(filters_n)
     # create test signal & transform
     wave_data = mdct_tests.sine_wav(0.8, 1024, sample_rate=sample_rate, duration_sec=5.)
     ampl = mdct.transform(wave_data)
