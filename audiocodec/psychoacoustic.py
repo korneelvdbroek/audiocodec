@@ -9,9 +9,18 @@ See also chapter 9 in "Digital Audio Signal Processing" by Udo Zolzer
 import tensorflow as tf
 import math
 
-_dB_MAX = 100.           # corresponds with abs(amplitude) = 1.
-_AMPLITUDE_EPS = 1e-6    # corresponds with a dB_min of -20dB
 
+#: _dB_MAX corresponds with abs(amplitude) = 1.
+#: To calibrate _dB_MAX, we used audio signals which come from mp3 encodings. This audio data does not have the
+#: high frequency components (>15.5Hz) since they were removed during the mp3 encoding (high quiet threshold
+#: for high frequencies). Since _dB_MAX determines how mdct amplitudes are converted to dB and hence how mdct amplitudes
+#: compare against the absolute scale of the quiet threshold, we were able to fix _dB_MAX at same level that was used
+#: in the original mp3 encodings
+_dB_MAX = 120.
+
+#: _AMPLITUDE_EPS corresponds with a dB_MIN of -140dB + _dB_MAX
+#: _dB_MIN needs to be lower than -9dB, since the quiet threshold at its minimum is -9dB
+_AMPLITUDE_EPS = 1e-7
 
 
 def amplitude_to_dB(amplitude):
@@ -25,7 +34,7 @@ def amplitude_to_dB(amplitude):
   return 10. * tf.math.log(tf.maximum(_AMPLITUDE_EPS ** 2.0, amplitude ** 2.0)) / tf.math.log(10.) + _dB_MAX
 
 
-_dB_MIN = amplitude_to_dB(_AMPLITUDE_EPS)
+_dB_MIN = amplitude_to_dB(_AMPLITUDE_EPS)  # = -20dB
 
 
 class PsychoacousticModel:
@@ -33,7 +42,8 @@ class PsychoacousticModel:
     """Computes required initialization matrices
 
     :param sample_rate:       sample_rate
-    :param alpha:             exponent for non-linear superposition (1.0 is linear superposition, 0.6 is default)
+    :param alpha:             exponent for non-linear superposition
+                              lower means lower quality (1.0 is linear superposition, 0.6 is default)
     :param filter_bands_n:    number of filter bands of the filter bank
     :param bark_bands_n:      number of bark bands
     :return:                  tuple with pre-computed required for encoder and decoder
@@ -75,7 +85,8 @@ class PsychoacousticModel:
     :param tonality_per_block:  tonality vector associated with the mdct_amplitudes [batches_n, blocks_n, 1, channels_n]
                                 can be computed using the method tonality(mdct_amplitudes)
     :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
-    :return:                    masking threshold [batches_n, blocks_n, filter_bands_n, channels_n]
+    :return:                    masking threshold in amplitude. Masking threshold is never negative
+                                [batches_n, blocks_n, filter_bands_n, channels_n]
     """
     with tf.name_scope('global_masking_threshold'):
       masking_threshold = self._masking_threshold_in_bark(mdct_amplitudes, tonality_per_block, drown)
@@ -95,7 +106,8 @@ class PsychoacousticModel:
     :param mdct_amplitudes:     mdct amplitudes (spectrum) for each filter [batches_n, blocks_n, filter_bands_n, channels_n]
     :param tonality_per_block:  tonality vector associated with the mdct_amplitudes [batches_n, blocks_n, 1, channels_n]
     :param drown:               factor 0..1 to drown out audible sounds (0: no drowning, 1: fully drowned)
-    :return:                    vector of amplitudes in dB for softest audible sounds given a certain sound [#channels, #blocks, bark_bands_n]
+    :return:                    vector of (positive) amplitudes for softest audible sounds given a certain sound
+                                [batches_n, blocks_n, bark_bands_n, channels_n]
     """
     max_frequency = self.sample_rate / 2.0  # Nyquist frequency: maximum frequency given a sample rate
     max_bark = self.freq2bark(max_frequency)
@@ -170,7 +182,7 @@ class PsychoacousticModel:
       (3.64 * (tf.pow(bark_bands_mid_kHz, -0.8))
        - 6.5 * tf.exp(-0.6 * tf.pow(bark_bands_mid_kHz - 3.3, 2.))
        + 1e-3 * (tf.pow(bark_bands_mid_kHz, 4.))),
-      -20, 160)
+      _dB_MIN, _dB_MAX)
 
     # convert dB to amplitude, where _dB_MAX corresponds with an amplitude of 1.0
     quiet_threshold_amplitude = tf.reshape(tf.pow(10.0, (quiet_threshold_dB - _dB_MAX) / 20), shape=[1, 1, -1, 1])
@@ -205,7 +217,7 @@ class PsychoacousticModel:
     max_bark = self.freq2bark(max_frequency)
     bark_band_width = max_bark / self.bark_bands_n
 
-    filter_band_width = max_frequency / tf.cast(self.filter_bands_n, dtype)
+    filter_band_width = max_frequency / tf.cast(self.filter_bands_n, dtype=dtype)
     filter_bands_mid_freq = filter_band_width * tf.range(self.filter_bands_n, dtype=dtype) + filter_band_width / 2
     filter_bands_mid_bark = self.freq2bark(filter_bands_mid_freq)
 

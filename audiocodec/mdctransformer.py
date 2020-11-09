@@ -79,10 +79,10 @@ class MDCTransformer:
 
     :param x:            signal data assumed in -1..1 range [batches_n, samples_n, channels_n]
     :return:             filters_n coefficients of MDCT transform for each block [batches_n, blocks_n+1, filter_bands_n, channels_n]
-                         where samples_n = blocks_n x filters_n
+                         where samples_n = blocks_n x filter_bands_n
                          amplitudes are normalized to be in the ]-1, 1[ range
     """
-    batches_n = x.shape[0]
+    batches_n = tf.shape(x)[0]
     channels_n = x.shape[2]
 
     # split signal into blocks
@@ -92,7 +92,7 @@ class MDCTransformer:
     mdct_amplitudes = self._dct4(self._polymatmul(x_pp, self.H))       # [batches_n x channels_n, blocks_n+1, filter_bands_n]
 
     # un-fold channels dimension
-    mdct_amplitudes = tf.reshape(mdct_amplitudes, shape=[batches_n, channels_n, mdct_amplitudes.shape[1], mdct_amplitudes.shape[2]])
+    mdct_amplitudes = tf.reshape(mdct_amplitudes, shape=[batches_n, channels_n, tf.shape(mdct_amplitudes)[1], tf.shape(mdct_amplitudes)[2]])
     mdct_amplitudes = tf.transpose(mdct_amplitudes, perm=[0, 2, 3, 1]) # [batches_n, blocks_n+1, filter_bands_n, channels_n]
 
     # up-scale
@@ -246,7 +246,7 @@ class MDCTransformer:
     :return:            multi-channel signal split in blocks [batches_n x channels_n, blocks_n, filter_bands_n]
     :raises             InvalidArgumentError when samples_n is not a multiple of filter_bands_n
     """
-    batches_n = x.shape[0]
+    batches_n = tf.shape(x)[0]
     channels_n = x.shape[2]
 
     x_transpose = tf.transpose(x, perm=[0, 2, 1])
