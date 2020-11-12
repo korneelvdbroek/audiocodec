@@ -54,6 +54,7 @@ class PsychoacousticModel:
     self.filter_bands_n = filter_bands_n
 
     # pre-compute some matrices
+    # todo: clean-up dtype, by having caller decide dtype in c'tor (remove all the tf.cast scattered in the code)
     self.W, self.W_inv = self._bark_freq_mapping(dtype=tf.float32)
     self.quiet_threshold_amplitude = self._quiet_threshold_amplitude_in_bark(dtype=tf.float32)
     self.spreading_matrix = self._spreading_matrix_in_bark()
@@ -69,9 +70,10 @@ class PsychoacousticModel:
     """
     mdct_intensity = tf.pow(mdct_amplitudes, 2)
 
-    sfm = 10 * tf.math.log(tf.divide(
-      tf.exp(tf.reduce_mean(tf.math.log(tf.maximum(_AMPLITUDE_EPS ** 2, mdct_intensity)), axis=2, keepdims=True)),
-      tf.reduce_mean(mdct_intensity, axis=2, keepdims=True) + _AMPLITUDE_EPS ** 2)) / math.log(10.0)
+    epsilon_sqr = tf.cast(_AMPLITUDE_EPS, dtype=mdct_amplitudes.dtype)**2
+    sfm = 10. * tf.math.log(tf.divide(
+      tf.exp(tf.reduce_mean(tf.math.log(tf.maximum(epsilon_sqr, mdct_intensity)), axis=2, keepdims=True)),
+      tf.reduce_mean(mdct_intensity, axis=2, keepdims=True) + epsilon_sqr)) / math.log(10.0)
 
     return tf.minimum(sfm / -60., 1.0)
 
@@ -94,7 +96,7 @@ class PsychoacousticModel:
       # Take max between quiet threshold and masking threshold
       # Note: even though both thresholds are expressed as amplitudes,
       # they are all positive due to the way they were constructed
-      global_masking_threshold_in_bark = tf.maximum(masking_threshold, self.quiet_threshold_amplitude)
+      global_masking_threshold_in_bark = tf.maximum(masking_threshold, tf.cast(self.quiet_threshold_amplitude, dtype=mdct_amplitudes.dtype))
 
       global_mask_threshold = self._mappingfrombark(global_masking_threshold_in_bark)
 
@@ -117,13 +119,17 @@ class PsychoacousticModel:
     # with i the bark index
     # see p10 ./docs/05_shl_AC_Psychacoustics_Models_WS-2016-17_gs.pdf)
     # in einsum, we tf.squeeze() axis=2 (index i) and take outer product with tf.linspace()
-    offset = (1. - drown) * (tf.einsum('nbic,j->nbjc', tonality_per_block, tf.linspace(0.0, max_bark, self.bark_bands_n))
+    offset = (1. - drown) * (tf.einsum('nbic,j->nbjc',
+                                       tonality_per_block,
+                                       tf.cast(tf.linspace(0.0, max_bark, self.bark_bands_n), dtype=mdct_amplitudes.dtype))
                              + 9. * tonality_per_block
                              + 5.5)
 
     # add offset to spreading matrix (see (9.18) in "Digital Audio Signal Processing" by Udo Zolzer)
     # note: einsum('.j.,.j.->.j.') multiplies elements on diagonal element-wise (without summing over j)
-    masking_matrix = tf.einsum('ij,nbjc->nbijc', self.spreading_matrix, tf.pow(10.0, -self.alpha * offset / 10.0))
+    masking_matrix = tf.einsum('ij,nbjc->nbijc',
+                               tf.cast(self.spreading_matrix, dtype=mdct_amplitudes.dtype),
+                               tf.pow(tf.cast(10.0, dtype=mdct_amplitudes.dtype), -self.alpha * offset / 10.0))
 
     # Transposed version of (9.17) in Digital Audio Signal Processing by Udo Zolzer
     # \Sum_i (amplitude_i^2)^{\alpha} x [ mask^{\alpha}_{i-n} ]_n
@@ -131,9 +137,10 @@ class PsychoacousticModel:
     # Non-linear superposition (see p13 ./docs/05_shl_AC_Psychacoustics_Models_WS-2016-17_gs.pdf)
     # \alpha ~ 0.3 is valid for 94 bark_bands_n; with less bark_bands_n 0.3 leads to (way) too much masking
     amplitudes_in_bark = self._mapping2bark(mdct_amplitudes)
-    intensity_in_bark = tf.pow(tf.maximum(_AMPLITUDE_EPS, amplitudes_in_bark), 2. * self.alpha)
+    epsilon = tf.cast(_AMPLITUDE_EPS, dtype=mdct_amplitudes.dtype)
+    intensity_in_bark = tf.pow(tf.maximum(epsilon, amplitudes_in_bark), 2. * self.alpha)
     masking_intensity_in_bark = tf.einsum('nbic,nbijc->nbjc', intensity_in_bark, masking_matrix)
-    masking_amplitude_in_bark = tf.pow(tf.maximum(_AMPLITUDE_EPS ** 2, masking_intensity_in_bark), 1. / (2. * self.alpha))
+    masking_amplitude_in_bark = tf.pow(tf.maximum(epsilon ** 2, masking_intensity_in_bark), 1. / (2. * self.alpha))
 
     return masking_amplitude_in_bark
 
@@ -245,8 +252,8 @@ class PsychoacousticModel:
     """
     # tf.maximum() is necessary, to make sure rounding errors don't make the gradient nan!
     mdct_intensity = tf.pow(mdct_amplitudes, 2)
-    mdct_intensity_in_bark = tf.einsum('nbic,ij->nbjc', mdct_intensity, self.W)
-    mdct_amplitudes_in_bark = tf.pow(tf.maximum(_AMPLITUDE_EPS ** 2, mdct_intensity_in_bark), 0.5)
+    mdct_intensity_in_bark = tf.einsum('nbic,ij->nbjc', mdct_intensity, tf.cast(self.W, dtype=mdct_amplitudes.dtype))
+    mdct_amplitudes_in_bark = tf.pow(tf.maximum(tf.cast(_AMPLITUDE_EPS ** 2, dtype=mdct_amplitudes.dtype), mdct_intensity_in_bark), 0.5)
 
     return mdct_amplitudes_in_bark
 
@@ -259,7 +266,7 @@ class PsychoacousticModel:
     :param W_inv:            matrix to convert from filter bins to bark bins [bark_bands_n, filter_bands_n]
     :return:                 vector of mdct amplitudes (spectrum) for each filter [batches_n, blocks_n, filter_bands_n, channels_n]
     """
-    return tf.einsum('nbic,ij->nbjc', amplitudes_bark, self.W_inv)
+    return tf.einsum('nbic,ij->nbjc', amplitudes_bark, tf.cast(self.W_inv, dtype=amplitudes_bark.dtype))
 
   def freq2bark(self, frequencies):
     """Empirical Bark scale"""
