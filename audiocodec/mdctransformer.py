@@ -10,7 +10,7 @@ import math
 
 
 class MDCTransformer:
-  def __init__(self, filters_n=1024, window_type='vorbis'):
+  def __init__(self, filters_n=1024, window_type='vorbis', dtype=tf.float32):
     """Computes required initialization matrices
     Note: H and H_inv are very sparse (2xfilter_n non-zero elements, arranged in diamond shape),
     yet TF2.0 does not support tf.nn.convolution for SparseTensor
@@ -18,6 +18,7 @@ class MDCTransformer:
 
     :param filters_n:   number of filter bands of the filter bank (needs to be even)
     :param window_type: None, 'sine' or 'vorbis' (default) to select window type
+    :param dtype        The type of the elements of the resulting tensor.
     :return:            tuple with pre-computed required for encoder and decoder
     """
     assert (filters_n % 2) == 0, "number of filters used in mdct transformation needs to be even"
@@ -26,8 +27,8 @@ class MDCTransformer:
     self.window_type = window_type
 
     # pre-compute some matrices
-    self.H = self._polyphase_matrix()
-    self.H_inv = self._inv_polyphase_matrix()
+    self.H = self._polyphase_matrix(dtype)
+    self.H_inv = self._inv_polyphase_matrix(dtype)
 
   @tf.function
   def transform(self, x):
@@ -96,7 +97,7 @@ class MDCTransformer:
     mdct_amplitudes = tf.transpose(mdct_amplitudes, perm=[0, 2, 3, 1]) # [batches_n, blocks_n+1, filter_bands_n, channels_n]
 
     # up-scale
-    return (1. / tf.sqrt(4. * tf.cast(self.filters_n, dtype=tf.float32))) * mdct_amplitudes
+    return (1. / tf.sqrt(4. * tf.cast(self.filters_n, dtype=x.dtype))) * mdct_amplitudes
 
   @tf.function
   def inverse_transform(self, mdct_amplitudes):
@@ -115,7 +116,7 @@ class MDCTransformer:
     mdct_amplitudes = tf.reshape(mdct_amplitudes, shape=[-1, mdct_amplitudes.shape[2], mdct_amplitudes.shape[3]])
     # [batches_n x channels_n, blocks_n, filter_bands_n]
 
-    mdct_rescaled = tf.sqrt(4. * tf.cast(self.filters_n, dtype=tf.float32)) * mdct_amplitudes
+    mdct_rescaled = tf.sqrt(4. * tf.cast(self.filters_n, dtype=mdct_amplitudes.dtype)) * mdct_amplitudes
 
     # put y through inverse filter bank
     x_pp = self._polymatmul(self._dct4(mdct_rescaled), self.H_inv)
@@ -125,7 +126,7 @@ class MDCTransformer:
 
     return x
 
-  def _polyphase_matrix(self):
+  def _polyphase_matrix(self, dtype):
     """Decomposed part of poly-phase matrix of an MDCT filter bank, with a sine modulated window:
       H(z) = (F_{analysis} x D) x DCT4
 
@@ -136,16 +137,17 @@ class MDCTransformer:
          w_{i+N} x_i + \\sqrt{1-w_{i+N}^2} x_{N-i}
       if input x's are maximal (1), then we need to weight with \\sqrt{2}
 
-    :return:             F_{analysis} x D           [filters_n, filters_n, 2]
+    :param dtype        The type of the elements of the resulting tensor.
+    :return:            F_{analysis} x D           [filters_n, filters_n, 2]
     """
     F_analysis = tf.expand_dims(
-      self._filter_window_matrix(), axis=1)                           # [filters_n, 1 (=blocks_n), filters_n]
-    D = self._delay_matrix()                                          # [2 (=blocks_n), filters_n, filters_n]
+      self._filter_window_matrix(dtype), axis=1)                      # [filters_n, 1 (=blocks_n), filters_n]
+    D = self._delay_matrix(dtype)                                     # [2 (=blocks_n), filters_n, filters_n]
     polyphase_matrix = self._polymatmul(F_analysis, D)                # [filters_n, 2 (=blocks_n), filters_n]
 
     return tf.transpose(polyphase_matrix, perm=[1, 0, 2])             # [2 (=blocks_n), filters_n, filters_n]
 
-  def _inv_polyphase_matrix(self):
+  def _inv_polyphase_matrix(self, dtype):
     """Decomposed part of inverse poly-phase matrix of an MDCT filter bank, with a sine modulated window:
       G(z) = DCT4 x (D^-1 x F_{synthesis})
 
@@ -154,37 +156,38 @@ class MDCTransformer:
     # invert Fa matrix for synthesis after removing last dim:
     F_synthesis = tf.expand_dims(
       tf.linalg.inv(
-        self._filter_window_matrix()), axis=0)                             # [1 (=blocks_n), filters_n, filters_n]
-    D_inv = self._inverse_delay_matrix()                                   # [filters_n, 2 (=blocks_n), filters_n]
+        self._filter_window_matrix(dtype)), axis=0)                        # [1 (=blocks_n), filters_n, filters_n]
+    D_inv = self._inverse_delay_matrix(dtype)                              # [filters_n, 2 (=blocks_n), filters_n]
     inv_polyphase_matrix = self._polymatmul(D_inv, F_synthesis)            # [filters_n, 2 (=blocks_n), filters_n]
 
     return tf.transpose(inv_polyphase_matrix, perm=[1, 0, 2])              # [2 (=blocks_n), filters_n, filters_n]
 
-  def _filter_window_matrix(self):
+  def _filter_window_matrix(self, dtype):
     """Produces a diamond shaped folding matrix F from the sine window which leads to identical analysis and
     synthesis base-band impulse responses. Hence has det 1 or -1.
 
+    :param dtype        the type of the elements of the resulting tensor.
     :return:            F of shape (filters_n, filters_n)
     """
     if self.window_type.lower() == 'sine':
       # Sine window:
-      filter_bank_windows = tf.sin(math.pi / (2 * self.filters_n) * (tf.range(0.5, int(1.5 * self.filters_n) + 0.5)))
+      filter_bank_windows = tf.sin(math.pi / (2 * self.filters_n) * tf.cast(tf.range(0.5, (3 * self.filters_n) // 2 + 0.5), dtype=dtype))
     elif self.window_type.lower() == 'vorbis':
       filter_bank_windows = tf.sin(
-        math.pi / 2. * tf.sin(math.pi / (2. * self.filters_n) * tf.range(0.5, int(1.5 * self.filters_n) + 0.5)) ** 2)
+        math.pi / 2. * tf.sin(math.pi / (2. * self.filters_n) * tf.cast(tf.range(0.5, (3 * self.filters_n) // 2 + 0.5), dtype=dtype)) ** 2)
     else:
-      # no modified window (issues with stopband attenuation)
-      filter_bank_windows = tf.ones(shape=[self.filters_n + int(self.filters_n / 2)])
+      # no modified window (issues with stop-band attenuation)
+      filter_bank_windows = tf.ones(shape=[self.filters_n + self.filters_n // 2], dtype=dtype)
 
     # lace window coefficients around diamond matrix
-    F_upper_left = tf.reverse(tf.linalg.diag(filter_bank_windows[0:int(self.filters_n / 2)]), axis=[1])
-    F_lower_left = tf.linalg.diag(filter_bank_windows[int(self.filters_n / 2):self.filters_n])
+    F_upper_left = tf.reverse(tf.linalg.diag(filter_bank_windows[0:self.filters_n // 2]), axis=[1])
+    F_lower_left = tf.linalg.diag(filter_bank_windows[self.filters_n // 2:self.filters_n])
     F_upper_right = tf.linalg.diag(filter_bank_windows[self.filters_n:(self.filters_n + int(self.filters_n / 2))])
     # F matrix is completed via consistency rule (hence no need for filter_bank_windows range to extend to 2filters_n-1
     sym = 1.0  # The kind of symmetry: +-1
-    ff = tf.reverse((sym * tf.ones((int(self.filters_n / 2)))
-                     - filter_bank_windows[self.filters_n:(int(1.5 * self.filters_n))] * filter_bank_windows[self.filters_n - 1:int(self.filters_n / 2) - 1:-1])
-                    / filter_bank_windows[0:int(self.filters_n / 2)], axis=[0])
+    ff = tf.reverse((sym * tf.ones((self.filters_n // 2), dtype=dtype)
+                     - filter_bank_windows[self.filters_n:(3 * self.filters_n) // 2] * filter_bank_windows[self.filters_n - 1:self.filters_n // 2 - 1:-1])
+                    / filter_bank_windows[0:self.filters_n // 2], axis=[0])
     # note for sine window:
     # ff entry i (i=0..filters_n/2)
     #    = (1-sin(pi/(2filters_n)(filters_n+i+.5)) * sin(pi/(2filters_n)(filters_n-i-.5))) / sin(pi/(2filters_n)(i+.5))
@@ -194,24 +197,26 @@ class MDCTransformer:
     return tf.concat([tf.concat([F_upper_left, F_upper_right], axis=1),
                       tf.concat([F_lower_left, F_lower_right], axis=1)], axis=0)
 
-  def _delay_matrix(self):
+  def _delay_matrix(self, dtype):
     """Delay matrix D(z), which has delay z^-1 on the upper half of its diagonal
     in a 3D polynomial representation (exponents of z^-1 are in the third dimension)
 
+    :param dtype:      the type of the elements of the resulting tensor.
     :return:           delay matrix [2, filters_n, filters_n]
     """
-    a = tf.linalg.diag(tf.concat([tf.zeros(int(self.filters_n / 2)), tf.ones(int(self.filters_n / 2))], axis=0))
-    b = tf.linalg.diag(tf.concat([tf.ones(int(self.filters_n / 2)), tf.zeros(int(self.filters_n / 2))], axis=0))
+    a = tf.linalg.diag(tf.concat([tf.zeros(self.filters_n // 2, dtype=dtype), tf.ones(self.filters_n // 2, dtype=dtype)], axis=0))
+    b = tf.linalg.diag(tf.concat([tf.ones(self.filters_n // 2, dtype=dtype), tf.zeros(self.filters_n // 2, dtype=dtype)], axis=0))
     return tf.stack([a, b], axis=0)
 
-  def _inverse_delay_matrix(self):
+  def _inverse_delay_matrix(self, dtype):
     """Causal inverse delay matrix D^{-1}(z), which has delays z^-1  on the lower
     half in 3D polynomial representation (exponents of z^-1 are in third dimension)
 
-    :return:   inverse delay matrix [filters_n, 2, filters_n]
+    :param dtype:      the type of the elements of the resulting tensor.
+    :return:           inverse delay matrix [filters_n, 2, filters_n]
     """
-    a = tf.linalg.diag(tf.concat([tf.ones(int(self.filters_n / 2)), tf.zeros(int(self.filters_n / 2))], axis=0))
-    b = tf.linalg.diag(tf.concat([tf.zeros(int(self.filters_n / 2)), tf.ones(int(self.filters_n / 2))], axis=0))
+    a = tf.linalg.diag(tf.concat([tf.ones(self.filters_n // 2, dtype=dtype), tf.zeros(self.filters_n // 2, dtype=dtype)], axis=0))
+    b = tf.linalg.diag(tf.concat([tf.zeros(self.filters_n // 2, dtype=dtype), tf.ones(self.filters_n // 2, dtype=dtype)], axis=0))
     return tf.stack([a, b], axis=1)
 
   def _split_in_blocks(self, x):
@@ -283,16 +288,26 @@ class MDCTransformer:
     :return:            3-D array where axis=1 is DCT4-transformed, orthonormal with shape [batches_n x channels_n, blocks_n, filters_n]
                         axis=2 contains coefficients of the cosine harmonics which compose the filters_n block signal
     """
+    if samples.dtype == tf.float32 or samples.dtype == tf.float64:
+      samples_upcast = samples
+    else:
+      samples_upcast = tf.cast(samples, dtype=tf.float32)
+
     # up-sample by inserting zeros for all even entries: this allows us to express DCT-IV as a DCT-III
     upsampled = tf.reshape(
-      tf.stack([tf.zeros(tf.shape(samples)), samples], axis=-1),
-      shape=[tf.shape(samples)[0], tf.shape(samples)[1], 2 * self.filters_n])
+      tf.stack([tf.zeros(tf.shape(samples_upcast), dtype=samples_upcast.dtype), samples_upcast], axis=-1),
+      shape=[tf.shape(samples_upcast)[0], tf.shape(samples_upcast)[1], 2 * self.filters_n])
 
     # conversion factor \sqrt{2} is needed to go from orthogonal DCT-III to orthogonal DCT-IV,
-    y = math.sqrt(2.) * tf.signal.dct(upsampled, type=3, axis=-1, norm='ortho')
+    y = tf.signal.dct(upsampled, type=3, axis=-1, norm='ortho')
+
+    if samples.dtype == tf.float32 or samples.dtype == tf.float64:
+      y_downcast = y
+    else:
+      y_downcast = tf.cast(y, dtype=samples.dtype)
 
     # down-sample
-    return y[:, :, 0:self.filters_n]
+    return tf.cast(tf.sqrt(2.), dtype=samples.dtype) * y_downcast[:, :, 0:self.filters_n]
 
   def _polymatmul(self, A, F):
     """Matrix multiplication of matrices where each entry is a polynomial.

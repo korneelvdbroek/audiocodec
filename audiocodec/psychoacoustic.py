@@ -31,10 +31,16 @@ def amplitude_to_dB(amplitude):
   :return:           corresponding dB scale
   """
   # return 10. * tf.math.log(amplitude ** 2.0) / tf.math.log(10.) + _dB_MAX
-  return 10. * tf.math.log(tf.maximum(_AMPLITUDE_EPS ** 2.0, amplitude ** 2.0)) / tf.math.log(10.) + _dB_MAX
+  if amplitude.dtype == tf.float32 or amplitude.dtype == tf.float64:
+    amplitude_upcast = amplitude
+  else:
+    amplitude_upcast = tf.cast(amplitude, dtype=tf.float32)
+
+  ampl_dB = 10. * tf.math.log(tf.maximum(_AMPLITUDE_EPS ** 2.0, amplitude_upcast ** 2.0)) / tf.math.log(10.) + _dB_MAX
+  return tf.cast(ampl_dB, dtype=amplitude.dtype)
 
 
-_dB_MIN = amplitude_to_dB(_AMPLITUDE_EPS)  # = -20dB
+_dB_MIN = amplitude_to_dB(tf.constant(_AMPLITUDE_EPS))  # = -20dB
 
 
 class PsychoacousticModel:
