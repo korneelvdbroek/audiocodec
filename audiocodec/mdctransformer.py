@@ -26,9 +26,9 @@ class MDCTransformer:
     self.filters_n = filters_n
     self.window_type = window_type
 
-    # pre-compute some matrices
-    self.H = self._polyphase_matrix(dtype)
-    self.H_inv = self._inv_polyphase_matrix(dtype)
+    # pre-compute some matrices in tf.float64 precision
+    self.H = tf.cast(self._polyphase_matrix(dtype=tf.float64), dtype=dtype)
+    self.H_inv = tf.cast(self._inv_polyphase_matrix(dtype=tf.float64), dtype=dtype)
 
   @tf.function
   def transform(self, x):
