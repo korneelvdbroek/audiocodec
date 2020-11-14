@@ -10,7 +10,7 @@ import math
 
 
 class MDCTransformer:
-  def __init__(self, filters_n=1024, window_type='vorbis', dtype=tf.float32):
+  def __init__(self, filters_n=1024, window_type='vorbis', dtype=tf.float32, internal_dtype=tf.float32):
     """Computes required initialization matrices
     Note: H and H_inv are very sparse (2xfilter_n non-zero elements, arranged in diamond shape),
     yet TF2.0 does not support tf.nn.convolution for SparseTensor
@@ -26,9 +26,12 @@ class MDCTransformer:
     self.filters_n = filters_n
     self.window_type = window_type
 
-    # pre-compute some matrices in tf.float64 precision
-    self.H = tf.cast(self._polyphase_matrix(dtype=tf.float64), dtype=dtype)
-    self.H_inv = tf.cast(self._inv_polyphase_matrix(dtype=tf.float64), dtype=dtype)
+    # compute_dtype: in- and output precision
+    # variable_dtype: higher precision  (=self.dtype)
+
+    # pre-compute some matrices in internal_dtype precision
+    self.H = self._polyphase_matrix(dtype=internal_dtype)
+    self.H_inv = self._inv_polyphase_matrix(dtype=internal_dtype)
 
   @tf.function
   def transform(self, x):
