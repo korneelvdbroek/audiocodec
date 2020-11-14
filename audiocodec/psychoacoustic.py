@@ -36,7 +36,9 @@ def amplitude_to_dB(amplitude):
   else:
     amplitude_upcast = tf.cast(amplitude, dtype=tf.float32)
 
-  ampl_dB = 10. * tf.math.log(tf.maximum(_AMPLITUDE_EPS ** 2.0, amplitude_upcast ** 2.0)) / tf.math.log(10.) + _dB_MAX
+  epsilon = tf.cast(_AMPLITUDE_EPS, dtype=amplitude_upcast.dtype)
+  dB_max = tf.cast(_dB_MAX, dtype=amplitude_upcast.dtype)
+  ampl_dB = 10. * tf.math.log(tf.maximum(epsilon ** 2.0, amplitude_upcast ** 2.0)) / tf.math.log(tf.cast(10., dtype=amplitude_upcast.dtype)) + dB_max
   return tf.cast(ampl_dB, dtype=amplitude.dtype)
 
 
