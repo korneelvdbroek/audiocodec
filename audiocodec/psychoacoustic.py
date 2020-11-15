@@ -20,6 +20,7 @@ class PsychoacousticModel:
     can vary, since both are established in the bark scale and then converted to the frequency scale.
     In that conversion process, the bark energy gets dissipated into (more) frequency buckets and
     the frequency by frequency threshold is hence lowered then more frequency buckets or the less bark bands one has.
+    todo: add normalization coefficient in definition of W and W_inv to solve this issue
 
     :param sample_rate:       sample_rate
     :param alpha:             exponent for non-linear superposition
