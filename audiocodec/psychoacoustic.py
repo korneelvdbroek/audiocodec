@@ -13,7 +13,13 @@ import tensorflow as tf
 class PsychoacousticModel:
   def __init__(self, sample_rate, filter_bands_n=1024, bark_bands_n=64, alpha=0.6,
                compute_dtype=tf.float32):
-    """Computes required initialization matrices
+    """Computes required initialization matrices.
+
+    For standard MP3 encoding, they use filter_bands_n=1024 and bark_bands_n=64.
+    If one deviates from these parameters, both the levels of the global masking threshold and the quiet threshold
+    can vary, since both are established in the bark scale and then converted to the frequency scale.
+    In that conversion process, the bark energy gets dissipated into (more) frequency buckets and
+    the frequency by frequency threshold is hence lowered then more frequency buckets or the less bark bands one has.
 
     :param sample_rate:       sample_rate
     :param alpha:             exponent for non-linear superposition
