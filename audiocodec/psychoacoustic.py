@@ -131,6 +131,7 @@ class PsychoacousticModel:
 
     return global_mask_threshold
 
+  @tf.function
   def add_noise(self, mdct_amplitudes, masking_threshold):
     """
     Adds inaudible noise to amplitudes, using the masking_threshold.
