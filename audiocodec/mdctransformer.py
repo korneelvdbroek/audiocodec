@@ -176,7 +176,7 @@ class MDCTransformer:
     """Produces a diamond shaped folding matrix F from the sine window which leads to identical analysis and
     synthesis base-band impulse responses. Hence has det 1 or -1.
 
-    :param precompute_dtype      the type of the elements of the resulting tensor.
+    :param precompute_dtype    the type of the elements of the resulting tensor.
     :return:                   F of shape (filters_n, filters_n)
     """
     if self.window_type.lower() == 'sine':
