@@ -51,7 +51,7 @@ class TestMDCT(unittest.TestCase):
     correct_spectrum = [-0.000412722176, 0.000430465181, 0.000789350364, -0.000867388735, -0.00275337417,
                         0.0132110268, 0.0193885863, 0.156005412, -0.233544752, -0.0129148215]
     for i, a in enumerate(correct_spectrum):
-      self.assertAlmostEquals(spectrum[0, 1, i, 0], a)
+      self.assertLess(spectrum[0, 1, i, 0] - a, 1e-6)
 
   def test_mdct_shape(self):
     """Check shape of mdct transform"""
