@@ -131,6 +131,24 @@ class PsychoacousticModel:
 
     return global_mask_threshold
 
+  def add_noise(self, mdct_amplitudes, masking_threshold):
+    """
+    Adds inaudible noise to amplitudes, using the masking_threshold.
+    The noise added is calibrated at a 3-sigma deviation in both directions:
+      masking_threshold = 6*sigma
+    As such, there is a 0.2% probability that the noise added is bigger than the masking_threshold
+
+    :param mdct_amplitudes:     mdct amplitudes (spectrum) for each filter [batches_n, blocks_n, filter_bands_n, channels_n]
+                                must be of compute_dtype
+    :param masking_threshold:   masking threshold in amplitude. Masking threshold is never negative
+                                output dtype is compute_dtype
+                                [batches_n, blocks_n, filter_bands_n, channels_n]
+    :return:                    mdct amplitudes with inaudible noise added [batches_n, blocks_n, filter_bands_n, channels_n]
+    """
+    noise = masking_threshold * tf.random.normal(shape=mdct_amplitudes.shape, mean=0., stddev=1. / 6., dtype=self.compute_dtype)
+
+    return mdct_amplitudes + noise
+
   def _masking_intensity_in_bark(self, mdct_amplitudes, tonality_per_block, drown=0.0):
     """Returns amplitudes that are masked by the sound defined by mdct_amplitudes
 
