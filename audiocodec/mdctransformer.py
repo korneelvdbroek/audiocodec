@@ -55,7 +55,7 @@ class MDCTransformer:
     Input has #samples, output has same amount of data (#samples = #blocks x filters_n).
 
     To improve computational efficiency, order of filter and down-sampling can be switched around (Noble Identities).
-    Each filter itself needs to be split into its filters_n poly-phase decompositions (see p25 ./docs/mrate.pdf):
+    Each filter itself needs to be split into its filters_n poly-phase decompositions:
 
       x ---+-----> down-sample by filters_n --> [[     ]  [     ]     [             ]]
            |z^-1                                [[ fil ]  [ fil ]     [             ]]
@@ -68,11 +68,6 @@ class MDCTransformer:
     with F_{analysis}: filter window matrix
          D:            delay matrix
          DCT4:         discrete cosine transformation matrix
-
-    read more:
-      ./docs/02_shl_Filterbanks1_NobleID_WS2016-17_o.pdf
-      ./docs/03_shl_FilterBanks2_WS2016-17.pdf
-      ./docs/mrate.pdf
 
     Return amplitude scaling:
     The dct4() amplitudes y_k are maximally of the order of

@@ -70,19 +70,32 @@ class PsychoacousticModel:
     self.spreading_matrix = tf.cast(self._spreading_matrix_in_bark(), dtype=compute_dtype)
 
   def amplitude_to_dB(self, mdct_amplitude):
-    """Utility function to convert the amplitude which is normalized in the [-1..1] range to dB.
+    """Utility function to convert the amplitude which is normalized in the [-1..1] range
+    to the dB scale.
     The dB scale is set such that
     1. an amplitude squared (intensity) of 1 corresponds to the maximum dB level (_dB_MAX), and
     2. an amplitude squared (intensity) of _INTENSITY_EPS corresponds with the minimum dB level (_dB_MIN)
 
-    :param mdct_amplitude:  amplitude normalized in [-1..1] range
+    :param mdct_amplitude:  amplitude normalized in [-1, 1] range
                             must be of compute_dtype
-    :return:                corresponding dB scale
+    :return:                corresponding dB scale in [_dB_MIN, _dB_MAX] range (positive)
                             output dtype is compute_dtype
     """
     ampl_dB = 10. * tf.math.log(tf.maximum(self._INTENSITY_EPS, mdct_amplitude ** 2.0)) / tf.math.log(
       tf.constant(10., dtype=self.compute_dtype)) + self._dB_MAX
     return ampl_dB
+
+  def amplitude_to_dB_norm(self, mdct_amplitude):
+    """Utility function to convert the amplitude which is normalized in the [-1..1] range
+    to the normalized dB scale [0, 1]
+
+    :param mdct_amplitude:  amplitude normalized in [-1, 1] range
+                            must be of compute_dtype
+    :return:                corresponding dB scale in [0, 1] range (positive)
+                            output dtype is compute_dtype
+    """
+    ampl_dB = self.amplitude_to_dB(mdct_amplitude)
+    return (ampl_dB - self._dB_MIN) / (self._dB_MAX - self._dB_MIN)
 
   @tf.function
   def tonality(self, mdct_amplitudes):
@@ -215,18 +228,17 @@ class PsychoacousticModel:
     return spreading_matrix
 
   def _quiet_threshold_intensity_in_bark(self, precompute_dtype):
-    """Compute the amplitudes of the softest sounds one can hear
+    """Compute the intensity of the softest sounds one can hear
        See (9.3) in "Digital Audio Signal Processing" by Udo Zolzer
 
-    :return:       amplitude vector for softest audible sounds [1, 1, bark_bands_n, 1]
+    :return:       intensity vector for softest audible sounds [1, 1, bark_bands_n, 1]
                    returned amplitudes are all positive
     """
     # Threshold in quiet:
     bark_bands_mid_bark = self.bark_band_width * tf.range(self.bark_bands_n, dtype=precompute_dtype) + self.bark_band_width / 2.
     bark_bands_mid_kHz = self.bark2freq(bark_bands_mid_bark) / 1000.
 
-    # Threshold of quiet expressed as amplitude (dB) for each Bark bands
-    # (see also p4 ./docs/05_shl_AC_Psychacoustics_Models_WS-2016-17_gs.pdf -- slide has 6.5 typo)
+    # Threshold of quiet expressed as amplitude in dB-scale for each Bark bands
     # see (9.3) in "Digital Audio Signal Processing" by Udo Zolzer
     quiet_threshold_dB = tf.clip_by_value(
       (3.64 * (tf.pow(bark_bands_mid_kHz, -0.8))
@@ -234,8 +246,9 @@ class PsychoacousticModel:
        + 1e-3 * (tf.pow(bark_bands_mid_kHz, 4.))),
       tf.cast(self._dB_MIN, dtype=precompute_dtype), tf.cast(self._dB_MAX, dtype=precompute_dtype))
 
-    # convert dB to intensity, where _dB_MAX corresponds with an amplitude of 1.0
-    quiet_threshold_intensity = tf.pow(tf.constant(10.0, dtype=precompute_dtype), (quiet_threshold_dB - tf.cast(self._dB_MAX, dtype=precompute_dtype)) / 10)
+    # convert to amplitude scale, where _dB_MAX corresponds with an amplitude of 1.0
+    quiet_threshold_intensity = tf.pow(tf.constant(10.0, dtype=precompute_dtype),
+                                       (quiet_threshold_dB - tf.cast(self._dB_MAX, dtype=precompute_dtype)) / 10)
 
     return tf.reshape(quiet_threshold_intensity, shape=[1, 1, -1, 1])
 
