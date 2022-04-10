@@ -89,6 +89,9 @@ class PsychoacousticModel:
     """Utility function to convert the amplitude which is normalized in the [-1..1] range
     to the normalized dB scale [0, 1]
 
+    output = (self.amplitude_to_dB(mdct_amplitude) - self._dB_MIN) / (self._dB_MAX - self._dB_MIN)
+           = 1 - 2 \ln(mdct_amplitude) / \ln(self._INTENSITY_EPS)
+
     :param mdct_amplitude:  amplitude normalized in [-1, 1] range
                             must be of compute_dtype
     :return:                corresponding dB scale in [0, 1] range (positive)
@@ -218,7 +221,7 @@ class PsychoacousticModel:
                             tf.linspace(-self.max_bark, self.max_bark, 2 * self.bark_bands_n))
 
     # Convert from dB to intensity and include alpha exponent
-    f_spreading_intensity = tf.pow(10.0, self.alpha * f_spreading / 10.0)
+    f_spreading_intensity = tf.pow(tf.constant(10.0, dtype=f_spreading.dtype), self.alpha * f_spreading / 10.0)
 
     # Turns the spreading prototype function into a (bark_bands_n x bark_bands_n) matrix of shifted versions.
     # Transposed version of (9.17) in Digital Audio Signal Processing by Udo Zolzer

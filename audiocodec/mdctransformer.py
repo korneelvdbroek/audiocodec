@@ -33,6 +33,28 @@ class MDCTransformer:
     # Variables then are down-cast before they enter the calculation with input data
     #   see https://developer.download.nvidia.com/video/gputechconf/gtc/2019/presentation/s91029-automated-mixed-precision-tools-for-tensorflow-training-v2.pdf
     precompute_dtype = tf.float64
+
+    # example of self.H for filters_n = 8
+    # self.H[0, :, :] =
+    #   [[ 0.          0.          0.          0.          0.99988616  0.          0.          0.        ]
+    #    [ 0.          0.          0.          0.          0.          0.9912527   0.          0.        ]
+    #    [ 0.          0.          0.          0.          0.          0.          0.93969655  0.        ]
+    #    [ 0.          0.          0.          0.          0.          0.          0.          0.80674446]
+    #    [ 0.          0.          0.          0.          0.          0.          0.         -0.5909005 ]
+    #    [ 0.          0.          0.          0.          0.          0.         -0.3420093   0.        ]
+    #    [ 0.          0.          0.          0.          0.         -0.13197729  0.          0.        ]
+    #    [ 0.          0.          0.          0.         -0.01509063  0.          0.          0.        ]]
+    #
+    # self.H[1, :, :] =
+    #   [[0.         0.         0.         0.01509063 0.         0.         0.         0.        ]
+    #    [0.         0.         0.13197729 0.         0.         0.         0.         0.        ]
+    #    [0.         0.3420093  0.         0.         0.         0.         0.         0.        ]
+    #    [0.5909005  0.         0.         0.         0.         0.         0.         0.        ]
+    #    [0.80674446 0.         0.         0.         0.         0.         0.         0.        ]
+    #    [0.         0.93969655 0.         0.         0.         0.         0.         0.        ]
+    #    [0.         0.         0.9912527  0.         0.         0.         0.         0.        ]
+    #    [0.         0.         0.         0.99988616 0.         0.         0.         0.        ]]
+
     self.H = tf.cast(self._polyphase_matrix(precompute_dtype=precompute_dtype), dtype=compute_dtype)
     self.H_inv = tf.cast(self._inv_polyphase_matrix(precompute_dtype=precompute_dtype), dtype=compute_dtype)
 
