@@ -12,7 +12,7 @@ import tensorflow as tf
 
 class PsychoacousticModel:
   def __init__(self, sample_rate, filter_bands_n=1024, bark_bands_n=64, alpha=0.6,
-               compute_dtype=tf.float32):
+               compute_dtype=tf.float32, precompute_dtype=tf.float64):
     """Computes required initialization matrices.
 
     For standard MP3 encoding, they use filter_bands_n=1024 and bark_bands_n=64.
@@ -58,7 +58,6 @@ class PsychoacousticModel:
     self._dB_MIN = self.amplitude_to_dB(self._INTENSITY_EPS)  # = -20dB
 
     # pre-compute some values & matrices with higher precision, then down-cast to compute_dtype
-    precompute_dtype = tf.float64
     self.max_frequency = tf.cast(self.sample_rate, dtype=precompute_dtype) / 2.0  # Nyquist frequency: maximum frequency given a sample rate
     self.max_bark = self.freq2bark(self.max_frequency)
     self.bark_band_width = self.max_bark / self.bark_bands_n

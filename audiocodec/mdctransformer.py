@@ -10,7 +10,8 @@ import math
 
 
 class MDCTransformer:
-  def __init__(self, filters_n=1024, window_type='vorbis', compute_dtype=tf.float32):
+  def __init__(self, filters_n=1024, window_type='vorbis',
+               compute_dtype=tf.float32, precompute_dtype=tf.float64):
     """Computes required initialization matrices
     Note: H and H_inv are very sparse (2xfilter_n non-zero elements, arranged in diamond shape),
     yet TF2.0 does not support tf.nn.convolution for SparseTensor
@@ -32,7 +33,6 @@ class MDCTransformer:
     # The variables are stored in variable_dtype, which corresponds to our precompute_dtype.
     # Variables then are down-cast before they enter the calculation with input data
     #   see https://developer.download.nvidia.com/video/gputechconf/gtc/2019/presentation/s91029-automated-mixed-precision-tools-for-tensorflow-training-v2.pdf
-    precompute_dtype = tf.float64
 
     # example of self.H for filters_n = 8
     # self.H[0, :, :] =
